@@ -1,0 +1,22 @@
+import { View, Text, ActivityIndicator } from 'react-native';
+import { Landmark } from 'lucide-react-native';
+import { useTheme } from '../theme/ThemeProvider';
+import { FONT } from '../theme/tokens';
+
+// Shown while AppContext is resolving the initial Firebase auth state (see
+// AppContext's authChecked) — mobile-only concern web doesn't have (a
+// browser tab just shows nothing/blank momentarily; a native app needs an
+// explicit branded frame or the transition from OS splash to first content
+// looks like a flash/glitch).
+export function SplashScreen() {
+  const { colors } = useTheme();
+  return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.forestDark, gap: 20 }}>
+      <View style={{ width: 72, height: 72, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+        <Landmark size={32} color={colors.amber} />
+      </View>
+      <Text style={{ fontFamily: FONT.serifBold, color: '#fff', fontSize: 24 }}>Mboa Trust</Text>
+      <ActivityIndicator color={colors.amber} />
+    </View>
+  );
+}
