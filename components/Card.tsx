@@ -30,9 +30,14 @@ export function Card({
   };
 
   if (onPress) {
+    // Visual styling (background/border/shadow) lives on the inner View, not
+    // on the Pressable itself — same fix as PillButton, see its comment.
+    // Pressable's `style` as a `({pressed}) => [...]` function has a real
+    // reported case of a solid backgroundColor silently failing to render on
+    // some RN/Android combinations while everything else painted fine.
     return (
-      <Pressable onPress={onPress} accessibilityRole="button" style={({ pressed }) => [base, { opacity: pressed ? 0.9 : 1 }, style]}>
-        {children}
+      <Pressable onPress={onPress} accessibilityRole="button">
+        {({ pressed }) => <View style={[base, { opacity: pressed ? 0.9 : 1 }, style]}>{children}</View>}
       </Pressable>
     );
   }

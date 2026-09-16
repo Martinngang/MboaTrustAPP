@@ -16,7 +16,11 @@ import { scanLandTitleDeed, type AIDeedScanResult } from '../api/geminiAI';
 
 interface Props {
   onScanComplete?: (result: AIDeedScanResult) => void;
-  onFileSelected?: (base64: string, mimeType: string) => void;
+  /** `uri` is the local picked-file reference — pass it through if the
+   * caller wants to actually upload this deed image as a real
+   * verification document (see useAddLandDocumentMutation), not just run
+   * it through the AI scanner. */
+  onFileSelected?: (uri: string, base64: string, mimeType: string) => void;
 }
 
 const ALERT_ICON: Record<string, string> = {
@@ -74,7 +78,7 @@ export function AIDeedScanner({ onScanComplete, onFileSelected }: Props) {
 
     const base64 = asset.base64 ?? '';
     const mimeType = asset.mimeType ?? 'image/jpeg';
-    onFileSelected?.(base64, mimeType);
+    onFileSelected?.(asset.uri, base64, mimeType);
 
     if (!base64) return;
     setScanning(true);

@@ -1,189 +1,104 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 
+// Ported from the real backend (verificationController.js,
+// verifierProfileController.js) and web's equivalent hooks in
+// api/reputation.ts / api/verifierProfiles.ts. The previous version of this
+// file invented fields with no backend counterpart at all — a `bountyFee`
+// per task (there is no verifier payment/bounty system anywhere in this
+// backend), `coordinates`, `dueDate`, a nested `contractorEvidence` block,
+// and a verifier profile `rating`/`completedTasksCount`/
+// `totalBountiesEarned` — and fell back to one specific fake verifier
+// ("Dr. Christian Nguema", 4.9 rating, 18 completed audits) and 3 fake
+// tasks (two with real-looking but fabricated Unsplash "evidence" photos)
+// whenever a real fetch failed or returned empty.
+export type VerificationTaskStatus = 'assigned' | 'in_progress' | 'submitted';
+
 export interface VerificationTask {
   id: string;
   targetType: 'milestone' | 'land_listing';
   targetId: string;
+  verifierId: string;
+  status: VerificationTaskStatus;
+  reportText: string;
+  reportPhotos: string[];
+  confirmedMatch: boolean | null;
+  createdAt: string;
   projectTitle: string;
   milestoneTitle?: string;
   location: string;
-  coordinates: { lat: number; lng: number };
-  dueDate: string;
-  bountyFee: number;
-  status: 'assigned' | 'in_progress' | 'submitted';
-  contractorEvidence?: {
-    photos: string[];
-    notes: string;
-    submittedAt: string;
-  };
-  report?: {
-    confirmedMatch: boolean;
-    reportText: string;
-    reportPhotos: string[];
-    submittedAt: string;
-  };
+  projectId?: string;
+}
+
+interface BackendVerificationTask {
+  _id: string;
+  targetType: 'milestone' | 'land_listing';
+  targetId: string;
+  verifierId: string;
+  status: VerificationTaskStatus;
+  reportText: string;
+  reportPhotos: string[];
+  confirmedMatch: boolean | null;
   createdAt: string;
+  target: { title: string; location: string; milestoneTitle?: string; projectId?: string } | null;
 }
 
-export interface VerifierProfile {
-  id: string;
-  fullName: string;
-  specialties: string[];
-  regions: string[];
-  bio: string;
-  applicationStatus: 'pending' | 'approved' | 'rejected';
-  isAvailable: boolean;
-  rating: number;
-  completedTasksCount: number;
-  totalBountiesEarned: number;
+function mapTask(doc: BackendVerificationTask): VerificationTask {
+  return {
+    id: doc._id,
+    targetType: doc.targetType,
+    targetId: doc.targetId,
+    verifierId: doc.verifierId,
+    status: doc.status,
+    reportText: doc.reportText,
+    reportPhotos: doc.reportPhotos,
+    confirmedMatch: doc.confirmedMatch,
+    createdAt: doc.createdAt,
+    projectTitle: doc.target?.title ?? (doc.targetType === 'land_listing' ? 'Land listing' : 'Project'),
+    milestoneTitle: doc.target?.milestoneTitle,
+    location: doc.target?.location ?? '',
+    projectId: doc.target?.projectId,
+  };
 }
 
-const DEFAULT_TASKS: VerificationTask[] = [
-  {
-    id: 'task-101',
-    targetType: 'milestone',
-    targetId: 'm-1',
-    projectTitle: 'Villa Odza Residential Construction',
-    milestoneTitle: 'Foundation Trench & Steel Rebar Casting',
-    location: 'Odza Borne 10, Yaoundé',
-    coordinates: { lat: 3.848, lng: 11.502 },
-    dueDate: 'In 2 days',
-    bountyFee: 75000,
-    status: 'assigned',
-    contractorEvidence: {
-      photos: [
-        'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=600&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?w=600&h=400&fit=crop',
-      ],
-      notes: 'Excavation completed to 1.5m, steel cage assembled and concrete slab poured.',
-      submittedAt: 'Yesterday',
-    },
-    createdAt: 'Yesterday',
-  },
-  {
-    id: 'task-102',
-    targetType: 'land_listing',
-    targetId: 'land-1',
-    projectTitle: '1,200 m² Prime Coastal Plot Inspection',
-    milestoneTitle: 'Cadastral Boundary Markers & Title Verification',
-    location: 'Ngoye Plage, Kribi',
-    coordinates: { lat: 2.938, lng: 9.907 },
-    dueDate: 'In 4 days',
-    bountyFee: 120000,
-    status: 'in_progress',
-    contractorEvidence: {
-      photos: [
-        'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=600&h=400&fit=crop',
-      ],
-      notes: 'Cadastral concrete corner beacons placed according to TF #8812/Oce survey layout.',
-      submittedAt: '2 days ago',
-    },
-    createdAt: '3 days ago',
-  },
-  {
-    id: 'task-103',
-    targetType: 'milestone',
-    targetId: 'm-2',
-    projectTitle: 'Mbalmayo Community Water Station',
-    milestoneTitle: 'Borehole Drilling to 65m & Casing Installation',
-    location: 'Quartier Oyack, Mbalmayo',
-    coordinates: { lat: 3.518, lng: 11.503 },
-    dueDate: 'Completed',
-    bountyFee: 90000,
-    status: 'submitted',
-    report: {
-      confirmedMatch: true,
-      reportText: 'Borehole depth measured at 67.2m with hydraulic pressure gauge verified. Clear water discharge tested.',
-      reportPhotos: [
-        'https://images.unsplash.com/photo-1503387762-592deb58ef4e?w=600&h=400&fit=crop',
-      ],
-      submittedAt: 'Aug 24, 2026',
-    },
-    createdAt: '1 week ago',
-  },
-];
-
-export function useMyVerifierProfileQuery() {
-  return useQuery({
-    queryKey: ['verifier-profile', 'me'],
-    queryFn: async (): Promise<VerifierProfile> => {
-      try {
-        const { data } = await api.get<{ data: any }>('/verifier-profiles/me');
-        if (data.data) {
-          return {
-            id: data.data._id || 'ver-1',
-            fullName: data.data.userName || 'Dr. Christian Nguema (Ing. Civil)',
-            specialties: data.data.specialties || ['Civil Engineering', 'Reinforced Concrete', 'Cadastral Surveying'],
-            regions: data.data.regions || ['Centre', 'Littoral', 'Sud'],
-            bio: data.data.bio || 'Sworn Civil Engineer & Land Surveyor registered with ONGC Cameroon.',
-            applicationStatus: data.data.applicationStatus || 'approved',
-            isAvailable: Boolean(data.data.isAvailable ?? true),
-            rating: 4.9,
-            completedTasksCount: 18,
-            totalBountiesEarned: 1450000,
-          };
-        }
-        return {
-          id: 'ver-1',
-          fullName: 'Dr. Christian Nguema (Ing. Civil)',
-          specialties: ['Civil Engineering', 'Reinforced Concrete', 'Cadastral Surveying', 'Structural Audits'],
-          regions: ['Centre', 'Littoral', 'Sud'],
-          bio: 'Sworn Civil Engineer & Land Surveyor registered with ONGC Cameroon.',
-          applicationStatus: 'approved',
-          isAvailable: true,
-          rating: 4.9,
-          completedTasksCount: 18,
-          totalBountiesEarned: 1450000,
-        };
-      } catch {
-        return {
-          id: 'ver-1',
-          fullName: 'Dr. Christian Nguema (Ing. Civil)',
-          specialties: ['Civil Engineering', 'Reinforced Concrete', 'Cadastral Surveying', 'Structural Audits'],
-          regions: ['Centre', 'Littoral', 'Sud'],
-          bio: 'Sworn Civil Engineer & Land Surveyor registered with ONGC Cameroon.',
-          applicationStatus: 'approved',
-          isAvailable: true,
-          rating: 4.9,
-          completedTasksCount: 18,
-          totalBountiesEarned: 1450000,
-        };
-      }
-    },
-    staleTime: 20_000,
-  });
-}
-
-export function useVerificationTasksQuery(status?: string) {
+/** No verifierId filter = the caller's own task queue (server-scoped). */
+export function useVerificationTasksQuery(status?: VerificationTaskStatus) {
   return useQuery({
     queryKey: ['verification-tasks', status],
     queryFn: async (): Promise<VerificationTask[]> => {
-      try {
-        const { data } = await api.get<{ data: any[] }>('/verification-tasks', { params: { status } });
-        if (data.data && data.data.length > 0) {
-          return data.data.map((t) => ({
-            id: t._id || t.id,
-            targetType: t.targetType || 'milestone',
-            targetId: t.targetId,
-            projectTitle: t.target?.title || t.projectTitle || 'Construction Project',
-            milestoneTitle: t.target?.milestoneTitle || t.milestoneTitle || 'Milestone Verification',
-            location: t.target?.location || t.location || 'Yaoundé, Cameroon',
-            coordinates: t.coordinates || { lat: 3.848, lng: 11.502 },
-            dueDate: t.dueDate || 'In 2 days',
-            bountyFee: t.bountyFee || 75000,
-            status: t.status || 'assigned',
-            contractorEvidence: t.contractorEvidence,
-            report: t.report,
-            createdAt: t.createdAt || new Date().toISOString(),
-          }));
-        }
-        return DEFAULT_TASKS;
-      } catch {
-        return DEFAULT_TASKS;
-      }
+      const { data } = await api.get<{ data: BackendVerificationTask[] }>('/verification-tasks', { params: { status } });
+      return data.data.map(mapTask);
     },
     staleTime: 10_000,
+  });
+}
+
+/** For a target owner (a funder's own milestone, a seller's own listing)
+ * checking whether it has a real, submitted independent verifier report —
+ * not a task-queue view, so it's keyed by target rather than the caller. */
+export function useTargetVerificationTasksQuery(targetType: 'milestone' | 'land_listing', targetId: string | undefined) {
+  return useQuery({
+    queryKey: ['verification-tasks', 'target', targetType, targetId],
+    queryFn: async (): Promise<VerificationTask[]> => {
+      const { data } = await api.get<{ data: BackendVerificationTask[] }>('/verification-tasks', {
+        params: { targetType, targetId },
+      });
+      return data.data.map(mapTask);
+    },
+    enabled: Boolean(targetId),
+    staleTime: 10_000,
+  });
+}
+
+export function useVerificationTaskQuery(taskId: string | undefined) {
+  return useQuery({
+    queryKey: ['verification-task', taskId],
+    queryFn: async (): Promise<VerificationTask> => {
+      const { data } = await api.get<{ data: BackendVerificationTask }>(`/verification-tasks/${taskId}`);
+      return mapTask(data.data);
+    },
+    enabled: Boolean(taskId),
+    staleTime: 5_000,
   });
 }
 
@@ -191,12 +106,10 @@ export function useStartVerificationTaskMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (taskId: string) => {
-      const { data } = await api.post(`/verification-tasks/${taskId}/start`);
-      return data;
+      const { data } = await api.post<{ data: BackendVerificationTask }>(`/verification-tasks/${taskId}/start`);
+      return mapTask(data.data);
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['verification-tasks'] });
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['verification-tasks'] }),
   });
 }
 
@@ -211,12 +124,10 @@ export function useSubmitVerificationReportMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ taskId, reportText, reportPhotos, confirmedMatch }: SubmitReportInput) => {
-      const { data } = await api.post(`/verification-tasks/${taskId}/report`, {
-        reportText,
-        reportPhotos,
-        confirmedMatch,
+      const { data } = await api.post<{ data: BackendVerificationTask }>(`/verification-tasks/${taskId}/report`, {
+        reportText, reportPhotos, confirmedMatch,
       });
-      return data;
+      return mapTask(data.data);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['verification-tasks'] });
@@ -225,21 +136,95 @@ export function useSubmitVerificationReportMutation() {
   });
 }
 
+// ── Verifier profile ─────────────────────────────────────────────────────
+export type VerifierApplicationStatus = 'pending' | 'approved' | 'rejected';
+
+export interface VerifierProfile {
+  id: string;
+  userId: string;
+  fullName?: string;
+  specialties: string[];
+  regions: string[];
+  bio: string;
+  idDocumentUrl: string;
+  applicationStatus: VerifierApplicationStatus;
+  isAvailable: boolean;
+}
+
+interface BackendVerifierProfile {
+  _id: string;
+  userId: { _id: string; fullName: string; email?: string } | string;
+  specialties: string[];
+  regions: string[];
+  bio: string;
+  idDocumentUrl: string;
+  applicationStatus: VerifierApplicationStatus;
+  isAvailable: boolean;
+}
+
+function mapProfile(doc: BackendVerifierProfile): VerifierProfile {
+  return {
+    id: doc._id,
+    userId: typeof doc.userId === 'object' ? doc.userId._id : doc.userId,
+    fullName: typeof doc.userId === 'object' ? doc.userId.fullName : undefined,
+    specialties: doc.specialties,
+    regions: doc.regions,
+    bio: doc.bio,
+    idDocumentUrl: doc.idDocumentUrl,
+    applicationStatus: doc.applicationStatus,
+    isAvailable: doc.isAvailable,
+  };
+}
+
+/** `null` means no application exists yet — a real, distinct state a
+ * caller must handle explicitly (e.g. offer to register), never papered
+ * over with placeholder data. */
+export function useMyVerifierProfileQuery(enabled = true) {
+  return useQuery({
+    queryKey: ['verifier-profile', 'me'],
+    queryFn: async (): Promise<VerifierProfile | null> => {
+      const { data } = await api.get<{ data: BackendVerifierProfile | null }>('/verifier-profiles/me');
+      return data.data ? mapProfile(data.data) : null;
+    },
+    enabled,
+    staleTime: 20_000,
+  });
+}
+
 export interface UpsertVerifierProfileInput {
   specialties: string[];
   regions: string[];
   bio?: string;
+  /** Government ID document — real multipart upload to the same
+   * POST /verifier-profiles/me (see backend's `upload.single('file')`).
+   * Optional so VerifierProfileScreen's credential-edit flow (no re-upload
+   * needed on every edit) keeps working unchanged. */
+  file?: { uri: string; fileName?: string | null; mimeType?: string | null } | null;
 }
 
 export function useUpsertVerifierProfileMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: UpsertVerifierProfileInput) => {
-      const { data } = await api.post('/verifier-profiles/me', input);
-      return data;
+    mutationFn: async ({ specialties, regions, bio, file }: UpsertVerifierProfileInput) => {
+      let response;
+      if (file) {
+        const form = new FormData();
+        form.append('specialties', JSON.stringify(specialties));
+        form.append('regions', JSON.stringify(regions));
+        if (bio) form.append('bio', bio);
+        form.append('file', {
+          uri: file.uri,
+          name: file.fileName ?? 'id-document.jpg',
+          type: file.mimeType ?? 'image/jpeg',
+        } as unknown as Blob);
+        response = await api.post<{ data: BackendVerifierProfile }>('/verifier-profiles/me', form, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+      } else {
+        response = await api.post<{ data: BackendVerifierProfile }>('/verifier-profiles/me', { specialties, regions, bio });
+      }
+      return mapProfile(response.data.data);
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['verifier-profile'] });
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['verifier-profile'] }),
   });
 }

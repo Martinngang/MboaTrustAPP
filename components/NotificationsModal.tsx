@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { View, Text, Modal, Pressable, ScrollView, ActivityIndicator } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { View, Text, Pressable, ScrollView, ActivityIndicator } from 'react-native';
+import { BottomSheetModal } from './BottomSheetModal';
 import {
   Bell,
   CheckCheck,
@@ -56,7 +56,6 @@ function getCategoryIcon(category: NotifCategory, title: string): LucideIcon {
 
 export function NotificationsModal() {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const { notificationsOpen, setNotificationsOpen } = useApp();
   const [activeCategory, setActiveCategory] = useState<NotifCategory | 'all'>('all');
   const [selectedNotif, setSelectedNotif] = useState<AppNotification | null>(null);
@@ -85,32 +84,8 @@ export function NotificationsModal() {
   };
 
   return (
-    <Modal
-      visible={notificationsOpen}
-      animationType="slide"
-      transparent
-      onRequestClose={handleClose}
-    >
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-        <Pressable
-          style={{ flex: 1 }}
-          onPress={handleClose}
-          accessibilityRole="button"
-          accessibilityLabel="Dismiss notifications"
-        />
-        <View
-          style={{
-            backgroundColor: colors.surface,
-            borderTopLeftRadius: 24,
-            borderTopRightRadius: 24,
-            borderTopWidth: 1,
-            borderColor: colors.parchmentDark,
-            paddingBottom: Math.max(insets.bottom, 20),
-            maxHeight: '90%',
-            minHeight: 450,
-          }}
-        >
-          {/* Header */}
+    <BottomSheetModal visible={notificationsOpen} onClose={handleClose} maxHeightPct={0.9} minHeight={450}>
+      {/* Header */}
           <View
             style={{
               flexDirection: 'row',
@@ -432,8 +407,6 @@ export function NotificationsModal() {
               </ScrollView>
             </View>
           )}
-        </View>
-      </View>
-    </Modal>
+    </BottomSheetModal>
   );
 }

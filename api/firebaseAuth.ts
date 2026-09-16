@@ -1,24 +1,32 @@
 import {
+  EmailAuthProvider,
+  GoogleAuthProvider,
   createUserWithEmailAndPassword,
+  linkWithCredential,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  signInWithCredential,
   signInWithEmailAndPassword,
+  signInWithPhoneNumber,
   signOut,
   updateProfile as updateFirebaseProfile,
+  type ApplicationVerifier,
+  type ConfirmationResult,
   type User,
 } from 'firebase/auth';
 import { firebaseAuthInstance, firebaseConfigured } from '../config/firebase';
 
-// Real email/password auth against the same Firebase project web uses (see
-// config/firebase.ts) — ported from MboaTrustFrontend/src/api/firebaseAuth.ts.
-// Google and Phone sign-in are deliberately NOT implemented here: Google needs
-// a platform-registered OAuth client (Android/iOS) this environment has no way
-// to create, and Firebase's phone auth needs a DOM-bound reCAPTCHA that has no
-// real RN equivalent without ejecting or a WebView-based package. Building
-// either as a UI button that doesn't actually work would violate "don't fake
-// functionality" — Email is the one method that's 100% real end-to-end here,
-// so it's the only one exposed. Re-export firebaseConfigured so screens don't
-// need a second import path for it.
+// Real email/password/Google/Phone auth against the same Firebase project web
+// uses (see config/firebase.ts) — ported from
+// MboaTrustFrontend/src/api/firebaseAuth.ts. Google here takes an ID token
+// (obtained via expo-auth-session's Google provider — see
+// components/GoogleAuthButton.tsx — instead of web's DOM `signInWithPopup`,
+// which has no RN equivalent) and exchanges it for a Firebase credential.
+// Phone takes an `ApplicationVerifier` supplied by the calling screen (a ref
+// to a mounted `FirebaseRecaptchaVerifierModal` — see
+// components/PhoneRecaptchaModal.tsx — standing in for web's DOM-bound
+// invisible reCAPTCHA, which also has no RN equivalent). Re-export
+// firebaseConfigured so screens don't need a second import path for it.
 export { firebaseConfigured };
 
 function requireAuth() {
@@ -53,10 +61,56 @@ export async function signInWithEmail(email: string, password: string): Promise<
   return result.user;
 }
 
+/** Exchanges a Google ID token (from expo-auth-session's
+ * `useIdTokenAuthRequest`) for a Firebase session — the RN equivalent of
+ * web's `signInWithGoogle`, which uses a DOM popup instead. */
+export async function signInWithGoogleIdToken(idToken: string): Promise<User> {
+  const auth = requireAuth();
+  const credential = GoogleAuthProvider.credential(idToken);
+  const result = await signInWithCredential(auth, credential);
+  return result.user;
+}
+
+/** Kicks off real phone sign-in — Firebase texts a code to `phoneNumber`
+ * (E.164 format, e.g. "+237677234891"). `verifier` is a ref to a mounted
+ * `FirebaseRecaptchaVerifierModal` (components/PhoneRecaptchaModal.tsx). */
+export async function startPhoneSignIn(phoneNumber: string, verifier: ApplicationVerifier): Promise<ConfirmationResult> {
+  const auth = requireAuth();
+  return signInWithPhoneNumber(auth, phoneNumber, verifier);
+}
+
+export async function confirmPhoneCode(confirmation: ConfirmationResult, code: string): Promise<User> {
+  const result = await confirmation.confirm(code);
+  return result.user;
+}
+
 /** Sends a "reset your password" email via Firebase's own hosted flow. */
 export async function sendPasswordReset(email: string): Promise<void> {
   const auth = requireAuth();
   await sendPasswordResetEmail(auth, email);
+}
+
+/** Adds Google as an additional sign-in method to the currently signed-in
+ * account (e.g. a phone-first user adding Google from Settings). Takes an
+ * ID token (from expo-auth-session, see components/GoogleAuthButton.tsx)
+ * rather than web's DOM popup, which RN has no equivalent for. Throws
+ * `auth/credential-already-in-use` if that Google account is already tied
+ * to a different Mboa Trust account — same as web's linkGoogleToCurrentUser. */
+export async function linkGoogleToCurrentUser(idToken: string): Promise<User> {
+  const auth = requireAuth();
+  if (!auth.currentUser) throw new Error('No signed-in user to link to');
+  const result = await linkWithCredential(auth.currentUser, GoogleAuthProvider.credential(idToken));
+  return result.user;
+}
+
+/** Adds email + password as an additional sign-in method to the currently
+ * signed-in account. Mirrors web's linkEmailPasswordToCurrentUser exactly. */
+export async function linkEmailPasswordToCurrentUser(email: string, password: string): Promise<User> {
+  const auth = requireAuth();
+  if (!auth.currentUser) throw new Error('No signed-in user to link to');
+  const credential = EmailAuthProvider.credential(email, password);
+  const result = await linkWithCredential(auth.currentUser, credential);
+  return result.user;
 }
 
 export async function firebaseSignOut(): Promise<void> {

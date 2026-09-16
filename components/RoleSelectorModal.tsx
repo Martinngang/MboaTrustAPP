@@ -1,6 +1,6 @@
-import { View, Text, Modal, Pressable, ScrollView } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { View, Text, Pressable, ScrollView } from 'react-native';
 import { Globe, Wrench, Store, MapPin, ShieldCheck, Check, X } from 'lucide-react-native';
+import { BottomSheetModal } from './BottomSheetModal';
 import type { LucideIcon } from 'lucide-react-native';
 import { useTheme } from '../theme/ThemeProvider';
 import { FONT } from '../theme/tokens';
@@ -66,7 +66,6 @@ export const ROLE_DEFINITIONS: RoleMeta[] = [
 
 export function RoleSelectorModal() {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const { activeRole, setActiveRole, roleSelectorOpen, setRoleSelectorOpen, roles } = useApp();
 
   const handleSelectRole = (role: NonNullable<Role>) => {
@@ -75,31 +74,8 @@ export function RoleSelectorModal() {
   };
 
   return (
-    <Modal
-      visible={roleSelectorOpen}
-      animationType="slide"
-      transparent
-      onRequestClose={() => setRoleSelectorOpen(false)}
-    >
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-        <Pressable
-          style={{ flex: 1 }}
-          onPress={() => setRoleSelectorOpen(false)}
-          accessibilityRole="button"
-          accessibilityLabel="Dismiss role selector"
-        />
-        <View
-          style={{
-            backgroundColor: colors.surface,
-            borderTopLeftRadius: 24,
-            borderTopRightRadius: 24,
-            borderTopWidth: 1,
-            borderColor: colors.parchmentDark,
-            paddingBottom: Math.max(insets.bottom, 20),
-            maxHeight: '85%',
-          }}
-        >
-          {/* Header */}
+    <BottomSheetModal visible={roleSelectorOpen} onClose={() => setRoleSelectorOpen(false)} maxHeightPct={0.85}>
+      {/* Header */}
           <View
             style={{
               flexDirection: 'row',
@@ -247,8 +223,6 @@ export function RoleSelectorModal() {
               );
             })}
           </ScrollView>
-        </View>
-      </View>
-    </Modal>
+    </BottomSheetModal>
   );
 }

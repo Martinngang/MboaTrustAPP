@@ -24,12 +24,16 @@ const STATUS_MAP: Record<string, { tone: StatusTone; label: string }> = {
   open: { tone: 'success', label: 'Open' },
   awarded: { tone: 'info', label: 'Awarded' },
   closed: { tone: 'neutral', label: 'Closed' },
+  resolved: { tone: 'success', label: 'Resolved' },
   requested: { tone: 'warning', label: 'Requested' },
   confirmed: { tone: 'info', label: 'Confirmed' },
   out_for_delivery: { tone: 'info', label: 'Out for delivery' },
   delivered: { tone: 'success', label: 'Delivered' },
   cancelled: { tone: 'neutral', label: 'Cancelled' },
   archived: { tone: 'neutral', label: 'Archived' },
+  countered: { tone: 'warning', label: 'Countered' },
+  declined: { tone: 'error', label: 'Declined' },
+  withdrawn: { tone: 'neutral', label: 'Withdrawn' },
 };
 
 export function StatusBadge({ status }: { status: string }) {

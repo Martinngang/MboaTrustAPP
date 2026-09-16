@@ -1,219 +1,450 @@
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
+import { getSocket } from './socket';
 
-export interface Participant {
-  id: string;
+// Ported 1:1 from MboaTrustFrontend/src/api/messaging.ts's REST + realtime
+// surface. Earlier mobile version only covered read/send/direct-start —
+// missing reactions, edit, delete, group chats, single-conversation lookup,
+// and user search (needed for the "new conversation" flow). This brings the
+// full backend surface web already relies on onto mobile.
+export interface BackendParticipant {
+  _id: string;
   fullName: string;
-  avatarUrl?: string;
-  role?: string;
+  avatarUrl: string | null;
 }
+
+export interface BackendPublicProfile {
+  _id: string;
+  fullName: string;
+  avatarUrl: string | null;
+}
+
+export interface BackendAttachment {
+  url: string;
+  type: string;
+  mimeType: string;
+  fileName?: string;
+  sizeBytes?: number;
+  durationSeconds?: number;
+}
+
+export interface BackendReaction {
+  userId: string;
+  emoji: string;
+}
+
+export interface BackendMessage {
+  _id: string;
+  conversationId: string;
+  senderId: BackendParticipant | string;
+  type: 'text' | 'image' | 'video' | 'audio' | 'file';
+  body: string;
+  attachments: BackendAttachment[];
+  replyToId: string | null;
+  reactions: BackendReaction[];
+  editedAt: string | null;
+  deletedAt: string | null;
+  sentAt: string;
+}
+
+export interface BackendConversation {
+  _id: string | null;
+  contextType: 'project' | 'bid' | 'land_listing' | 'direct' | 'group';
+  contextId?: string;
+  title: string | null;
+  avatarUrl: string | null;
+  participantIds: BackendParticipant[];
+  updatedAt: string;
+  unreadCount?: number;
+  lastMessage?: BackendMessage;
+}
+
+const CONTEXT_LABEL: Record<string, string> = {
+  project: 'Project',
+  bid: 'Tender',
+  land_listing: 'Land listing',
+  direct: 'Direct',
+  group: 'Group',
+};
 
 export interface Conversation {
   id: string;
-  contextType: 'project' | 'bid' | 'land_listing' | 'direct';
-  contextId?: string;
-  title: string;
+  /** True when the backend returned a draft placeholder — never persisted,
+   * because no message has been sent through it yet. */
+  draft: boolean;
   withName: string;
   withRole: string;
+  context: string;
   avatarInitial: string;
   avatarUrl?: string;
   unreadCount: number;
-  lastMessageText: string;
-  lastMessageTime: string;
-  participantIds: Participant[];
+  lastMessage?: BackendMessage;
+  isGroup: boolean;
+  updatedAt: string;
+  participantIds: BackendParticipant[];
 }
 
 export interface ChatMessage {
   id: string;
   conversationId: string;
   from: 'me' | 'them';
-  senderName: string;
+  senderName?: string;
   senderAvatar?: string;
+  type: 'text' | 'image' | 'video' | 'audio' | 'file';
   text: string;
-  imageUrl?: string;
+  attachments: BackendAttachment[];
   timestamp: string;
-  status: 'sent' | 'delivered' | 'read';
+  rawSentAt: string;
+  read: boolean;
+  reactions: BackendReaction[];
+  replyToId: string | null;
+  isEdited: boolean;
+  isDeleted: boolean;
 }
 
-const DEFAULT_CONVERSATIONS: Conversation[] = [
-  {
-    id: 'conv-1',
-    contextType: 'project',
-    contextId: 'proj-1',
-    title: 'Villa Odza Residential Construction',
-    withName: 'ETS Kamga BTP (Contractor)',
-    withRole: 'Contractor',
-    avatarInitial: 'K',
-    unreadCount: 1,
-    lastMessageText: 'Foundation concrete pour has been completed and verified with site photos.',
-    lastMessageTime: '10:45 AM',
-    participantIds: [
-      { id: 'usr-1', fullName: 'Marie-Claire (Funder)', role: 'funder' },
-      { id: 'usr-2', fullName: 'Jean-Paul Kamga (Contractor)', role: 'contractor' },
-    ],
-  },
-  {
-    id: 'conv-2',
-    contextType: 'land_listing',
-    contextId: 'land-1',
-    title: '1,200 m² Prime Coastal Plot Kribi',
-    withName: 'Jean-Pierre Eboa (Seller)',
-    withRole: 'Landowner',
-    avatarInitial: 'E',
-    unreadCount: 0,
-    lastMessageText: 'The cadastral boundary markers are clearly visible on the perimeter.',
-    lastMessageTime: 'Yesterday',
-    participantIds: [
-      { id: 'usr-1', fullName: 'Marie-Claire (Funder)', role: 'funder' },
-      { id: 'usr-3', fullName: 'Jean-Pierre Eboa (Seller)', role: 'seller' },
-    ],
-  },
-  {
-    id: 'conv-3',
-    contextType: 'direct',
-    title: 'Quincaillerie Centrale Yaoundé',
-    withName: 'Quincaillerie Centrale',
-    withRole: 'Supplier',
-    avatarInitial: 'Q',
-    unreadCount: 0,
-    lastMessageText: '150 bags of Cimencam 42.5R dispatched via truck #WB-881.',
-    lastMessageTime: 'Aug 26',
-    participantIds: [
-      { id: 'usr-1', fullName: 'Marie-Claire (Funder)', role: 'funder' },
-      { id: 'usr-4', fullName: 'Store Manager', role: 'quincaillerie' },
-    ],
-  },
-];
+function mapConversation(doc: BackendConversation, selfId: string): Conversation {
+  const isGroup = doc.contextType === 'group';
+  const other = doc.participantIds?.find((p) => String((p as any)._id || p) !== String(selfId));
+  const name = isGroup
+    ? doc.title || 'Group Chat'
+    : other?.fullName && other.fullName.trim()
+      ? other.fullName.trim()
+      : 'MboaTrust User';
 
-const DEFAULT_MESSAGES: Record<string, ChatMessage[]> = {
-  'conv-1': [
-    {
-      id: 'm-1',
-      conversationId: 'conv-1',
-      from: 'me',
-      senderName: 'Marie-Claire',
-      text: 'Hello Jean-Paul, how is the excavation progressing on the Odza site?',
-      timestamp: '10:30 AM',
-      status: 'read',
-    },
-    {
-      id: 'm-2',
-      conversationId: 'conv-1',
-      from: 'them',
-      senderName: 'Jean-Paul Kamga',
-      text: 'Good morning Madame. Excavation reached 1.5m depth yesterday. Rebar cages are assembled.',
-      timestamp: '10:35 AM',
-      status: 'read',
-    },
-    {
-      id: 'm-3',
-      conversationId: 'conv-1',
-      from: 'them',
-      senderName: 'Jean-Paul Kamga',
-      text: 'Foundation concrete pour has been completed and verified with site photos.',
-      imageUrl: 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=600&h=400&fit=crop',
-      timestamp: '10:45 AM',
-      status: 'delivered',
-    },
-  ],
-  'conv-2': [
-    {
-      id: 'm-4',
-      conversationId: 'conv-2',
-      from: 'me',
-      senderName: 'Marie-Claire',
-      text: 'Hello, is the Titre Foncier #8812/Oce directly transferable at the notary?',
-      timestamp: 'Yesterday',
-      status: 'read',
-    },
-    {
-      id: 'm-5',
-      conversationId: 'conv-2',
-      from: 'them',
-      senderName: 'Jean-Pierre Eboa',
-      text: 'Yes absolutely. The cadastral boundary markers are clearly visible on the perimeter.',
-      timestamp: 'Yesterday',
-      status: 'read',
-    },
-  ],
-};
+  const avatarUrl = isGroup ? doc.avatarUrl || undefined : other?.avatarUrl || undefined;
 
-export function useConversationsQuery() {
+  return {
+    id: doc._id || '',
+    draft: !doc._id,
+    withName: name,
+    withRole: 'user',
+    context: CONTEXT_LABEL[doc.contextType] || doc.contextType,
+    avatarInitial: (name[0] || '?').toUpperCase(),
+    avatarUrl,
+    unreadCount: doc.unreadCount || 0,
+    lastMessage: doc.lastMessage,
+    isGroup,
+    updatedAt: doc.updatedAt,
+    participantIds: doc.participantIds || [],
+  };
+}
+
+function mapMessage(doc: BackendMessage, selfId: string): ChatMessage {
+  const senderObj = typeof doc.senderId === 'object' ? doc.senderId : null;
+  const isMe = senderObj ? String(senderObj._id) === String(selfId) : String(doc.senderId) === String(selfId);
+  return {
+    id: doc._id,
+    conversationId: doc.conversationId,
+    from: isMe ? 'me' : 'them',
+    senderName: senderObj?.fullName,
+    senderAvatar: senderObj?.avatarUrl || undefined,
+    type: doc.type,
+    text: doc.body,
+    attachments: doc.attachments || [],
+    timestamp: new Date(doc.sentAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+    rawSentAt: doc.sentAt,
+    read: true,
+    reactions: doc.reactions || [],
+    replyToId: doc.replyToId,
+    isEdited: Boolean(doc.editedAt),
+    isDeleted: Boolean(doc.deletedAt),
+  };
+}
+
+export function useConversationsQuery(selfId: string | null) {
   return useQuery({
-    queryKey: ['conversations'],
+    queryKey: ['conversations', selfId],
     queryFn: async (): Promise<Conversation[]> => {
-      try {
-        const { data } = await api.get<{ data: any[] }>('/conversations');
-        if (data.data && data.data.length > 0) {
-          return data.data.map((c) => ({
-            id: c._id || c.id,
-            contextType: c.contextType || 'direct',
-            contextId: c.contextId,
-            title: c.title || 'Conversation',
-            withName: c.participantIds?.[0]?.fullName || 'Chat Partner',
-            withRole: c.contextType || 'Direct',
-            avatarInitial: (c.participantIds?.[0]?.fullName || 'C')[0],
-            avatarUrl: c.avatarUrl,
-            unreadCount: c.unreadCount || 0,
-            lastMessageText: c.lastMessage?.body || 'No messages yet',
-            lastMessageTime: 'Recent',
-            participantIds: (c.participantIds || []).map((p: any) => ({
-              id: p._id || p.id,
-              fullName: p.fullName || 'User',
-              avatarUrl: p.avatarUrl,
-            })),
-          }));
-        }
-        return DEFAULT_CONVERSATIONS;
-      } catch {
-        return DEFAULT_CONVERSATIONS;
-      }
+      const { data } = await api.get<{ data: BackendConversation[] }>('/conversations');
+      return data.data.map((c) => mapConversation(c, selfId!));
     },
+    enabled: Boolean(selfId),
     staleTime: 10_000,
   });
 }
 
-export function useMessagesQuery(conversationId: string) {
+export function useSingleConversationQuery(conversationId: string | undefined, selfId: string | null) {
   return useQuery({
-    queryKey: ['messages', conversationId],
-    queryFn: async (): Promise<ChatMessage[]> => {
-      try {
-        const { data } = await api.get<{ data: any[] }>(`/conversations/${conversationId}/messages`);
-        if (data.data && data.data.length > 0) {
-          return data.data.map((m) => ({
-            id: m._id || m.id,
-            conversationId,
-            from: m.senderId === 'me' ? 'me' : 'them',
-            senderName: typeof m.senderId === 'object' ? m.senderId.fullName : 'Participant',
-            text: m.body || '',
-            imageUrl: m.attachments?.[0]?.url,
-            timestamp: new Date(m.sentAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            status: 'delivered',
-          }));
-        }
-        return DEFAULT_MESSAGES[conversationId] || DEFAULT_MESSAGES['conv-1'];
-      } catch {
-        return DEFAULT_MESSAGES[conversationId] || DEFAULT_MESSAGES['conv-1'];
-      }
+    queryKey: ['conversation', conversationId, selfId],
+    queryFn: async (): Promise<Conversation> => {
+      const { data } = await api.get<{ data: BackendConversation }>(`/conversations/${conversationId}`);
+      return mapConversation(data.data, selfId!);
     },
-    enabled: !!conversationId,
+    enabled: Boolean(conversationId && selfId),
+    staleTime: 10_000,
+  });
+}
+
+export function useConversationMessagesQuery(conversationId: string | undefined, selfId: string | null) {
+  return useQuery({
+    queryKey: ['messages', conversationId, selfId],
+    queryFn: async (): Promise<ChatMessage[]> => {
+      const { data } = await api.get<{ data: BackendMessage[] }>(`/conversations/${conversationId}/messages`);
+      return data.data.map((m) => mapMessage(m, selfId!));
+    },
+    enabled: Boolean(conversationId && selfId),
     staleTime: 5_000,
   });
 }
 
-export function useSendMessageMutation() {
+export function useConversationRealtime(conversationId: string | undefined, selfId: string | null) {
+  const qc = useQueryClient();
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!conversationId || !selfId) return;
+    const socket = getSocket();
+    socket.emit('conversation:join', conversationId);
+
+    const onNew = (raw: BackendMessage) => {
+      if (raw.conversationId !== conversationId) return;
+      const mapped = mapMessage(raw, selfId);
+      qc.setQueryData<ChatMessage[]>(['messages', conversationId, selfId], (prev) => {
+        if (prev?.some((m) => m.id === mapped.id)) return prev;
+        return [...(prev ?? []), mapped];
+      });
+      qc.invalidateQueries({ queryKey: ['conversations'] });
+    };
+
+    const onEdited = (raw: BackendMessage) => {
+      if (raw.conversationId !== conversationId) return;
+      qc.setQueryData<ChatMessage[]>(['messages', conversationId, selfId], (prev) =>
+        prev?.map((m) => (m.id === raw._id ? mapMessage(raw, selfId) : m))
+      );
+    };
+
+    const onDeleted = ({ messageId }: { messageId: string }) => {
+      qc.setQueryData<ChatMessage[]>(['messages', conversationId, selfId], (prev) =>
+        prev?.map((m) => (m.id === messageId ? { ...m, isDeleted: true, text: 'This message was deleted' } : m))
+      );
+    };
+
+    const onTypingStart = ({ userId, fullName }: { userId: string; fullName: string }) => {
+      if (String(userId) === String(selfId)) return;
+      setTypingUsers((prev) => (prev.includes(fullName) ? prev : [...prev, fullName]));
+    };
+    const onTypingStop = ({ fullName }: { userId: string; fullName: string }) => {
+      setTypingUsers((prev) => prev.filter((name) => name !== fullName));
+    };
+
+    socket.on('message:new', onNew);
+    socket.on('message:edited', onEdited);
+    socket.on('message:deleted', onDeleted);
+    socket.on('typing:start', onTypingStart);
+    socket.on('typing:stop', onTypingStop);
+
+    return () => {
+      socket.emit('conversation:leave', conversationId);
+      socket.off('message:new', onNew);
+      socket.off('message:edited', onEdited);
+      socket.off('message:deleted', onDeleted);
+      socket.off('typing:start', onTypingStart);
+      socket.off('typing:stop', onTypingStop);
+    };
+  }, [conversationId, selfId, qc]);
+
+  return { typingUsers };
+}
+
+export function useSendMessageMutation(selfId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ conversationId, text, imageUrl }: { conversationId: string; text: string; imageUrl?: string }) => {
-      const { data } = await api.post(`/conversations/${conversationId}/messages`, {
-        body: text,
-        attachments: imageUrl ? [{ url: imageUrl, type: 'image', mimeType: 'image/jpeg' }] : [],
+    mutationFn: async ({
+      conversationId,
+      body,
+      attachments,
+      replyToId,
+    }: {
+      conversationId: string;
+      body: string;
+      attachments?: BackendAttachment[];
+      replyToId?: string;
+    }) => {
+      const { data } = await api.post<{ data: BackendMessage }>(`/conversations/${conversationId}/messages`, {
+        body,
+        attachments,
+        replyToId,
       });
-      return data;
+      return mapMessage(data.data, selfId!);
     },
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['messages', vars.conversationId] });
+    onSuccess: (msg) => {
+      qc.setQueryData<ChatMessage[]>(['messages', msg.conversationId, selfId], (prev) =>
+        prev?.some((m) => m.id === msg.id) ? prev : [...(prev ?? []), msg]
+      );
       qc.invalidateQueries({ queryKey: ['conversations'] });
+    },
+  });
+}
+
+export function useStartConversationMutation(selfId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      contextType,
+      contextId,
+      participantIds,
+      otherUserId,
+      title,
+    }: {
+      contextType: string;
+      contextId?: string;
+      participantIds?: string[];
+      otherUserId?: string;
+      title?: string;
+    }) => {
+      const pIds = participantIds || (otherUserId ? [otherUserId] : []);
+      const { data } = await api.post<{ data: BackendConversation }>('/conversations', {
+        contextType,
+        contextId,
+        participantIds: pIds,
+        title,
+      });
+      return mapConversation(data.data, selfId!);
+    },
+    onSuccess: (newConv) => {
+      if (newConv.draft) return;
+      qc.setQueryData<Conversation>(['conversation', newConv.id, selfId], newConv);
+      qc.setQueryData<Conversation[]>(['conversations', selfId], (prev) => {
+        if (!prev) return [newConv];
+        if (prev.some((c) => c.id === newConv.id)) return prev.map((c) => (c.id === newConv.id ? newConv : c));
+        return [newConv, ...prev];
+      });
+      qc.invalidateQueries({ queryKey: ['conversations'] });
+    },
+  });
+}
+
+/** Lightweight lookup for an existing 1:1 conversation with another user —
+ * so a draft chat opened from "Message X" can redirect onto the real thread
+ * if one already exists, instead of leaving two entry points open. */
+export function useDirectConversationQuery(otherUserId: string | undefined, selfId: string | null) {
+  return useQuery({
+    queryKey: ['conversation-direct', otherUserId, selfId],
+    queryFn: async (): Promise<Conversation | null> => {
+      try {
+        const { data } = await api.get<{ data: BackendConversation }>(`/conversations/direct/${otherUserId}`);
+        return mapConversation(data.data, selfId!);
+      } catch (err: any) {
+        if (err?.response?.status === 404) return null;
+        throw err;
+      }
+    },
+    enabled: Boolean(otherUserId && selfId),
+    staleTime: 5_000,
+  });
+}
+
+export function useUserProfileQuery(userId: string | undefined) {
+  return useQuery({
+    queryKey: ['user-profile', userId],
+    queryFn: async (): Promise<BackendPublicProfile> => {
+      const { data } = await api.get<{ data: BackendPublicProfile }>(`/users/${userId}`);
+      return data.data;
+    },
+    enabled: Boolean(userId),
+    staleTime: 60_000,
+  });
+}
+
+/** Atomically resolves-or-creates the 1:1 conversation with recipientId and
+ * sends the first message into it — the only path that ever persists a new
+ * direct conversation, so opening a chat alone can never leave an empty row. */
+export function useSendDirectMessageMutation(selfId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      recipientId,
+      contextType,
+      contextId,
+      body,
+      attachments,
+      replyToId,
+    }: {
+      recipientId: string;
+      contextType?: string;
+      contextId?: string;
+      body: string;
+      attachments?: BackendAttachment[];
+      replyToId?: string;
+    }) => {
+      const { data } = await api.post<{ data: { conversation: BackendConversation; message: BackendMessage } }>(
+        '/messages/direct',
+        { recipientId, contextType, contextId, body, attachments, replyToId }
+      );
+      return {
+        conversation: mapConversation(data.data.conversation, selfId!),
+        message: mapMessage(data.data.message, selfId!),
+      };
+    },
+    onSuccess: ({ conversation, message }) => {
+      qc.setQueryData<ChatMessage[]>(['messages', conversation.id, selfId], (prev) =>
+        prev?.some((m) => m.id === message.id) ? prev : [...(prev ?? []), message]
+      );
+      qc.setQueryData<Conversation>(['conversation', conversation.id, selfId], conversation);
+      qc.setQueryData<Conversation[]>(['conversations', selfId], (prev) => {
+        if (!prev) return [conversation];
+        if (prev.some((c) => c.id === conversation.id)) return prev.map((c) => (c.id === conversation.id ? conversation : c));
+        return [conversation, ...prev];
+      });
+      qc.invalidateQueries({ queryKey: ['conversations'] });
+    },
+  });
+}
+
+export function useSearchUsersQuery(query: string) {
+  return useQuery({
+    queryKey: ['users', 'search', query],
+    queryFn: async (): Promise<BackendParticipant[]> => {
+      if (!query) return [];
+      const { data } = await api.get<{ data: BackendParticipant[] }>(`/users/search?q=${encodeURIComponent(query)}`);
+      return data.data;
+    },
+    enabled: query.length > 1,
+  });
+}
+
+export function useReactToMessageMutation(conversationId: string, selfId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ messageId, emoji }: { messageId: string; emoji: string }) => {
+      const { data } = await api.post<{ data: BackendMessage }>(`/messages/${messageId}/react`, { emoji });
+      return data.data;
+    },
+    onSuccess: (raw) => {
+      qc.setQueryData<ChatMessage[]>(['messages', conversationId, selfId], (prev) =>
+        prev?.map((m) => (m.id === raw._id ? { ...m, reactions: raw.reactions || [] } : m))
+      );
+    },
+  });
+}
+
+export function useEditMessageMutation(conversationId: string, selfId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ messageId, body }: { messageId: string; body: string }) => {
+      const { data } = await api.patch<{ data: BackendMessage }>(`/messages/${messageId}`, { body });
+      return data.data;
+    },
+    onSuccess: (raw) => {
+      qc.setQueryData<ChatMessage[]>(['messages', conversationId, selfId], (prev) =>
+        prev?.map((m) => (m.id === raw._id ? { ...m, text: raw.body, isEdited: true } : m))
+      );
+    },
+  });
+}
+
+export function useDeleteMessageMutation(conversationId: string, selfId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (messageId: string) => {
+      await api.delete(`/messages/${messageId}`);
+      return messageId;
+    },
+    onSuccess: (messageId) => {
+      qc.setQueryData<ChatMessage[]>(['messages', conversationId, selfId], (prev) =>
+        prev?.map((m) => (m.id === messageId ? { ...m, isDeleted: true, text: '' } : m))
+      );
     },
   });
 }

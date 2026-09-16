@@ -22,21 +22,40 @@ import { fmt } from '../../components/fmt';
 import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
 import { useProjectQuery } from '../../api/projects';
+import { useBidsQuery } from '../../api/tenders';
+import { useApp } from '../../context/AppContext';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
+import type { StatusTone } from '../../theme/tokens';
+import type { TranslationKey } from '../../i18n/translations';
 
 type RouteProps = RouteProp<MainStackParamList, 'JobDetail'>;
 
+// Bid.js enforces one bid per contractor per project with a unique index —
+// there's no "try again" state to design for once a bid exists, just "here's
+// what happened to the one you sent" (mirrors
+// MboaTrustFrontend/src/screens/ContractorScreens.tsx's APPLIED_STATUS_COPY).
+const APPLIED_STATUS: Record<string, { tone: StatusTone; labelKey: TranslationKey }> = {
+  pending: { tone: 'warning', labelKey: 'jobDetail.bidStatusPending' },
+  accepted: { tone: 'success', labelKey: 'jobDetail.bidStatusAccepted' },
+  rejected: { tone: 'error', labelKey: 'jobDetail.bidStatusRejected' },
+  withdrawn: { tone: 'neutral', labelKey: 'jobDetail.bidStatusWithdrawn' },
+};
+
 export function JobDetailScreen() {
-  const { colors } = useTheme();
+  const { colors, statusTones } = useTheme();
+  const { t } = useTranslation();
+  const { user } = useApp();
   const route = useRoute<RouteProps>();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { jobId } = route.params;
 
   const { data: job, isLoading } = useProjectQuery(jobId);
+  const { data: myBids } = useBidsQuery({ contractorId: user?._id });
 
   if (isLoading) {
     return (
-      <Screen header={<Header title="Tender Details" back />}>
+      <Screen header={<Header title={t('jobDetail.title')} back />}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60 }}>
           <ActivityIndicator color={colors.steel} />
         </View>
@@ -44,59 +63,34 @@ export function JobDetailScreen() {
     );
   }
 
-  // Fallback demo job if not directly in mock db
-  const jobData = job || {
-    id: jobId,
-    title: 'Residential Villa Structural Masonry & Concrete',
-    category: 'Masonry & Concrete',
-    location: 'Odza, Yaoundé (Centre)',
-    description: 'Looking for a certified contractor to execute foundation slab casting, reinforced masonry columns, and beam elevation according to approved engineering plans.',
-    totalAmount: 4500000,
-    raised: 4500000,
-    released: 0,
-    escrowBalance: 4500000,
-    status: 'open',
-    ownerId: 'funder-1',
-    ownerName: 'Marie-Claire N. (Diaspora Funder)',
-    milestones: [
-      {
-        id: 'm-1',
-        title: 'Site Preparation & Foundation Slab',
-        description: 'Excavation, leveling, and foundation concrete pouring with rebar cage',
-        amount: 1800000,
-        status: 'pending',
-        requiresVideo: true,
-        requiresMultiApproval: false,
-        evidence: [],
-        approvers: [],
-      },
-      {
-        id: 'm-2',
-        title: 'Wall Elevation & Lintel Beams',
-        description: 'Parpaing bricklaying, reinforced concrete pillars, and beam casting',
-        amount: 1700000,
-        status: 'pending',
-        requiresVideo: true,
-        requiresMultiApproval: false,
-        evidence: [],
-        approvers: [],
-      },
-      {
-        id: 'm-3',
-        title: 'Roof Framing & Final Site Inspection',
-        description: 'Roof truss installation, sheeting, and final structural signoff',
-        amount: 1000000,
-        status: 'pending',
-        requiresVideo: false,
-        requiresMultiApproval: true,
-        evidence: [],
-        approvers: [],
-      },
-    ],
-  };
+  if (!job) {
+    return (
+      <Screen header={<Header title={t('jobDetail.title')} back />}>
+        <View style={{ padding: 24, alignItems: 'center', gap: 12 }}>
+          <AlertCircle size={40} color={colors.seal} />
+          <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 18 }}>
+            {t('jobDetail.notFoundTitle')}
+          </Text>
+          <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 13, textAlign: 'center' }}>
+            {t('jobDetail.notFoundDesc')}
+          </Text>
+          <PillButton onPress={() => navigation.goBack()} variant="secondary">
+            {t('jobDetail.goBack')}
+          </PillButton>
+        </View>
+      </Screen>
+    );
+  }
+
+  const jobData = job;
+  // A funder can also hold a contractor role (multi-role accounts are
+  // supported platform-wide) — the restriction is specifically "never bid
+  // on your own tender," not "funders can never see the bid UI at all".
+  const isOwnTender = Boolean(user?._id) && jobData.ownerId === user?._id;
+  const myBid = (myBids || []).find((b) => b.jobId === jobData.id);
 
   return (
-    <Screen header={<Header title="Tender Details" subtitle={jobData.location} back />}>
+    <Screen header={<Header title={t('jobDetail.title')} subtitle={jobData.location} back />}>
       <View style={{ padding: 16, gap: 18 }}>
         {/* Tender Header Card */}
         <Card style={{ padding: 16, gap: 12 }}>
@@ -120,7 +114,7 @@ export function JobDetailScreen() {
                 {jobData.title}
               </Text>
             </View>
-            <StatusBadge status="open" />
+            <StatusBadge status={jobData.status} />
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -138,13 +132,13 @@ export function JobDetailScreen() {
         {/* Budget & Timeline Card */}
         <Card style={{ padding: 16, gap: 14 }}>
           <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.5 }}>
-            Financial & Escrow Terms
+            {t('jobDetail.financialTerms')}
           </Text>
 
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <View>
               <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase' }}>
-                Client Budget Envelope
+                {t('jobDetail.clientBudget')}
               </Text>
               <Text style={{ fontFamily: FONT.serifBold, color: colors.forest, fontSize: 20, marginTop: 2 }}>
                 {fmt(jobData.totalAmount)}
@@ -153,12 +147,12 @@ export function JobDetailScreen() {
 
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase' }}>
-                Payment Protection
+                {t('jobDetail.paymentProtection')}
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
                 <ShieldCheck size={16} color={colors.forest} />
                 <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forest, fontSize: 13 }}>
-                  100% Escrowed
+                  {t('jobDetail.escrowed100')}
                 </Text>
               </View>
             </View>
@@ -174,7 +168,7 @@ export function JobDetailScreen() {
             }}
           >
             <Text style={{ fontFamily: FONT.sans, color: colors.ink, fontSize: 12, lineHeight: 17 }}>
-              Milestone payments are locked safely in MboaTrust Escrow prior to project commencement and released directly to your account upon verified completion.
+              {t('jobDetail.escrowExplainer')}
             </Text>
           </View>
         </Card>
@@ -182,14 +176,14 @@ export function JobDetailScreen() {
         {/* Expected Milestone Tranches */}
         <View style={{ gap: 12 }}>
           <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5 }}>
-            Required Milestones ({jobData.milestones.length})
+            {t('jobDetail.requiredMilestones')} ({jobData.milestones.length})
           </Text>
 
           {jobData.milestones.map((m, idx) => (
             <Card key={m.id || idx} style={{ padding: 14, gap: 6 }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Text style={{ fontFamily: FONT.mono, color: colors.steel, fontSize: 10, textTransform: 'uppercase', fontWeight: '700' }}>
-                  Tranche {idx + 1}
+                  {t('jobDetail.tranche')} {idx + 1}
                 </Text>
                 <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 14 }}>
                   {fmt(m.amount)}
@@ -207,20 +201,66 @@ export function JobDetailScreen() {
           ))}
         </View>
 
-        {/* Submit Bid Action */}
-        <PillButton
-          variant="primary"
-          onPress={() =>
-            navigation.navigate('SubmitBid', {
-              jobId: jobData.id,
-              jobTitle: jobData.title,
-              budget: jobData.totalAmount,
-            })
-          }
-          fullWidth
-        >
-          Submit Proposal & Milestone Bid
-        </PillButton>
+        {/* Bid Action Area */}
+        {isOwnTender ? (
+          <View style={{ gap: 10 }}>
+            <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12, textAlign: 'center' }}>
+              {t('jobDetail.ownTenderNotice')}
+            </Text>
+            <PillButton
+              variant="primary"
+              onPress={() => navigation.navigate('TenderBids', { jobId: jobData.id, jobTitle: jobData.title })}
+              fullWidth
+            >
+              {t('jobDetail.viewBids')}
+            </PillButton>
+          </View>
+        ) : myBid ? (
+          <View style={{ gap: 10 }}>
+            <View
+              style={{
+                padding: 14,
+                borderRadius: 12,
+                alignItems: 'center',
+                backgroundColor: statusTones[APPLIED_STATUS[myBid.status]?.tone ?? 'neutral'].bg,
+              }}
+            >
+              <Text style={{ fontFamily: FONT.sansSemiBold, color: statusTones[APPLIED_STATUS[myBid.status]?.tone ?? 'neutral'].text, fontSize: 13 }}>
+                {t(APPLIED_STATUS[myBid.status]?.labelKey ?? 'jobDetail.alreadyApplied')}
+              </Text>
+            </View>
+            <PillButton
+              variant="secondary"
+              onPress={() => (myBid.status === 'pending' ? navigation.navigate('Negotiation', { bidId: myBid.id }) : navigation.navigate('MyBids', undefined))}
+              fullWidth
+            >
+              {myBid.status === 'pending' ? t('jobDetail.viewYourBid') : t('jobDetail.viewInMyBids')}
+            </PillButton>
+          </View>
+        ) : jobData.status === 'open' ? (
+          <View style={{ gap: 10 }}>
+            <PillButton
+              variant="primary"
+              onPress={() =>
+                navigation.navigate('SubmitBid', {
+                  jobId: jobData.id,
+                  jobTitle: jobData.title,
+                  budget: jobData.totalAmount,
+                })
+              }
+              fullWidth
+            >
+              {t('jobDetail.submitProposal')}
+            </PillButton>
+            <PillButton
+              variant="secondary"
+              onPress={() => navigation.navigate('BrowseContractors', undefined)}
+              fullWidth
+            >
+              {t('jobDetail.compareContractors')}
+            </PillButton>
+          </View>
+        ) : null}
       </View>
     </Screen>
   );

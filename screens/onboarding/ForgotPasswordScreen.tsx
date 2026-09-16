@@ -10,6 +10,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
 import { sendPasswordReset } from '../../api/firebaseAuth';
 import { friendlyAuthError } from '../../api/authErrors';
+import { useTranslation } from '../../i18n/useTranslation';
 import type { AuthStackParamList } from '../../navigation/types';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'ForgotPassword'>;
@@ -19,6 +20,7 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'ForgotPassword'>;
 // same as web.
 export function ForgotPasswordScreen({ navigation }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
@@ -26,7 +28,7 @@ export function ForgotPasswordScreen({ navigation }: Props) {
 
   const submit = async () => {
     setError('');
-    if (!/^\S+@\S+\.\S+$/.test(email)) return setError('Enter a valid email address.');
+    if (!/^\S+@\S+\.\S+$/.test(email)) return setError(t('forgotPassword.errorEmail'));
     setSending(true);
     try {
       await sendPasswordReset(email.trim());
@@ -40,17 +42,16 @@ export function ForgotPasswordScreen({ navigation }: Props) {
 
   if (sent) {
     return (
-      <OnboardingShell title="Check your inbox">
+      <OnboardingShell title={t('forgotPassword.checkInbox')}>
         <View style={{ alignItems: 'center', gap: 16 }}>
           <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.forest + '1F', alignItems: 'center', justifyContent: 'center' }}>
             <Check size={24} color={colors.forest} />
           </View>
           <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 13, textAlign: 'center', lineHeight: 20 }}>
-            We sent a password reset link to <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink }}>{email}</Text>. Follow it to choose a
-            new password, then come back and sign in.
+            {t('forgotPassword.sentTo')} <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink }}>{email}</Text>{t('forgotPassword.sentFollow')}
           </Text>
           <PillButton onPress={() => navigation.navigate('Login')} variant="secondary" fullWidth>
-            Back to sign in
+            {t('forgotPassword.backToSignIn')}
           </PillButton>
         </View>
       </OnboardingShell>
@@ -58,19 +59,29 @@ export function ForgotPasswordScreen({ navigation }: Props) {
   }
 
   return (
-    <OnboardingShell title="Reset your password" subtitle="Enter the email you signed up with and we'll send you a reset link.">
+    <OnboardingShell title={t('forgotPassword.title')} subtitle={t('forgotPassword.subtitle')}>
       <View style={{ gap: 14 }}>
         {error && <InlineAlert>{error}</InlineAlert>}
-        <TextField label="Email" value={email} onChangeText={setEmail} placeholder="you@example.com" autoComplete="email" autoCapitalize="none" keyboardType="email-address" />
+        <TextField
+          label={t('forgotPassword.email')}
+          value={email}
+          onChangeText={setEmail}
+          placeholder="you@example.com"
+          autoComplete="email"
+          autoCapitalize="none"
+          keyboardType="email-address"
+          returnKeyType="send"
+          onSubmitEditing={submit}
+        />
         <PillButton onPress={submit} fullWidth disabled={sending} loading={sending}>
-          Send reset link
+          {t('forgotPassword.sendLink')}
         </PillButton>
         <Text
           onPress={() => navigation.navigate('Login')}
           accessibilityRole="button"
           style={{ fontFamily: FONT.sansSemiBold, color: colors.inkSubtle, fontSize: 12, textAlign: 'center' }}
         >
-          Back to sign in
+          {t('forgotPassword.backToSignIn')}
         </Text>
       </View>
     </OnboardingShell>

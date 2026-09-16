@@ -1,16 +1,9 @@
-import { useState } from 'react';
-import { View, Text, Pressable, TextInput, ScrollView } from 'react-native';
+import { useRef, useState } from 'react';
+import { View, Text, Pressable, TextInput } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import {
-  ShieldCheck,
-  Check,
-  DollarSign,
-  Calendar,
-  FileCheck,
-  AlertCircle,
-} from 'lucide-react-native';
+import { ShieldCheck } from 'lucide-react-native';
 import { Screen } from '../../components/Screen';
 import { Header } from '../../components/Header';
 import { Card } from '../../components/Card';
@@ -20,26 +13,24 @@ import { useToast } from '../../components/Toast';
 import { fmt } from '../../components/fmt';
 import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
-import { useCreateLandOfferMutation } from '../../api/land';
+import { useCreateLandOfferMutation } from '../../api/landOffers';
+import { apiErrorMessage } from '../../api/client';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
 
 type RouteProps = RouteProp<MainStackParamList, 'PurchaseOffer'>;
 
-const PAYMENT_TERMS = [
-  {
-    id: 'notary_escrow',
-    title: '100% Escrow on Notary Title Transfer',
-    description: 'Full purchase sum is reserved in MboaTrust Escrow and released only upon sworn notary deed handover.',
-  },
-  {
-    id: 'two_tranches',
-    title: '2-Tranche Phased Release (30% / 70%)',
-    description: '30% upon cadastral boundary demarcation report, 70% upon official title registration.',
-  },
-] as const;
-
+// The "Escrow Settlement Protocol" picker (100% on notary transfer vs a
+// 2-tranche 30/70 split) used to be sent as a `paymentTerms` field — the
+// real LandOffer schema has no such concept at all, just `offerAmount` and
+// a free-text `message`. Presenting a specific binding-sounding payment
+// protocol the backend can't actually enforce would mislead a seller into
+// thinking something was agreed that wasn't, so it's gone rather than kept
+// as decoration; a buyer can still describe payment preferences in the
+// notes, which really is sent.
 export function PurchaseOfferScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const route = useRoute<RouteProps>();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { show: showToast } = useToast();
@@ -48,65 +39,67 @@ export function PurchaseOfferScreen() {
   const { listingId, title = 'Land Plot', askingPrice = 18000000 } = route.params;
 
   const [proposedPrice, setProposedPrice] = useState(String(askingPrice));
-  const [paymentTerms, setPaymentTerms] = useState<'notary_escrow' | 'two_tranches'>('notary_escrow');
-  const [notes, setNotes] = useState('Purchase conditional upon cadastral boundary verification and clear title status.');
+  const [notes, setNotes] = useState('');
+  const notesRef = useRef<TextInput>(null);
 
   const numPrice = Number(proposedPrice) || 0;
   const discountDiff = askingPrice - numPrice;
 
   const handleSubmitOffer = async () => {
     if (numPrice <= 0) {
-      showToast({ title: 'Invalid Offer', description: 'Please enter a valid offer price in XAF.', tone: 'error' });
+      showToast({ title: t('purchaseOffer.invalidOffer'), description: t('purchaseOffer.invalidOfferDesc'), tone: 'error' });
       return;
     }
 
     try {
       await offerMutation.mutateAsync({
         listingId,
-        proposedPrice: numPrice,
-        paymentTerms,
-        notes: notes.trim(),
+        offerAmount: numPrice,
+        message: notes.trim(),
       });
 
       showToast({
-        title: 'Offer Submitted!',
-        description: 'Seller has been notified of your escrow-backed purchase proposal.',
+        title: t('purchaseOffer.offerSubmitted'),
+        description: t('purchaseOffer.sellerNotified'),
         tone: 'success',
       });
       navigation.goBack();
-    } catch (err: any) {
-      showToast({ title: 'Submission Error', description: err?.message || 'Could not submit offer.', tone: 'error' });
+    } catch (err) {
+      showToast({ title: t('purchaseOffer.submissionError'), description: apiErrorMessage(err, t('purchaseOffer.couldNotSubmit')), tone: 'error' });
     }
   };
 
   return (
-    <Screen header={<Header title="Submit Purchase Offer" subtitle={title} back />}>
+    <Screen header={<Header title={t('purchaseOffer.title')} subtitle={title} back />}>
       <View style={{ padding: 16, gap: 18 }}>
         {/* Asking Price Comparison Card */}
         <Card style={{ padding: 16, gap: 6, backgroundColor: colors.seal + '15', borderColor: colors.seal + '35' }}>
           <Text style={{ fontFamily: FONT.mono, color: colors.seal, fontSize: 10, textTransform: 'uppercase', fontWeight: '700' }}>
-            Target Property
+            {t('purchaseOffer.targetProperty')}
           </Text>
           <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 16 }}>
             {title}
           </Text>
           <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 13 }}>
-            Official Asking Price: <Text style={{ fontFamily: FONT.serifBold, color: colors.ink }}>{fmt(askingPrice)}</Text>
+            {t('purchaseOffer.officialAskingPrice')} <Text style={{ fontFamily: FONT.serifBold, color: colors.ink }}>{fmt(askingPrice)}</Text>
           </Text>
         </Card>
 
         {/* Offer Price Input */}
         <Card style={{ padding: 16, gap: 14 }}>
           <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 15 }}>
-            Your Proposed Purchase Price (XAF)
+            {t('purchaseOffer.proposedPriceTitle')}
           </Text>
 
           <TextField
-            label="Offer Amount (XAF)"
+            label={t('purchaseOffer.offerAmountLabel')}
             placeholder={String(askingPrice)}
             value={proposedPrice}
             onChangeText={(v) => setProposedPrice(v.replace(/[^0-9]/g, ''))}
             keyboardType="numeric"
+            returnKeyType="next"
+            blurOnSubmit={false}
+            onSubmitEditing={() => notesRef.current?.focus()}
           />
 
           {/* Quick Price Buttons */}
@@ -114,7 +107,7 @@ export function PurchaseOfferScreen() {
             {[
               { label: '90% (-10%)', val: Math.round(askingPrice * 0.9) },
               { label: '95% (-5%)', val: Math.round(askingPrice * 0.95) },
-              { label: '100% Full', val: askingPrice },
+              { label: t('purchaseOffer.full100'), val: askingPrice },
             ].map((btn, i) => (
               <Pressable
                 key={i}
@@ -137,7 +130,7 @@ export function PurchaseOfferScreen() {
           {discountDiff !== 0 && (
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingTop: 4 }}>
               <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
-                {discountDiff > 0 ? 'Discount requested:' : 'Premium offered:'}
+                {discountDiff > 0 ? t('purchaseOffer.discountRequested') : t('purchaseOffer.premiumOffered')}
               </Text>
               <Text style={{ fontFamily: FONT.mono, color: discountDiff > 0 ? colors.amber : colors.forest, fontSize: 12, fontWeight: '700' }}>
                 {discountDiff > 0 ? `-${fmt(discountDiff)}` : `+${fmt(Math.abs(discountDiff))}`}
@@ -146,54 +139,14 @@ export function PurchaseOfferScreen() {
           )}
         </Card>
 
-        {/* Escrow Settlement Terms */}
-        <Card style={{ padding: 16, gap: 12 }}>
-          <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 15 }}>
-            Select Escrow Settlement Protocol
-          </Text>
-
-          <View style={{ gap: 10 }}>
-            {PAYMENT_TERMS.map((t) => {
-              const active = paymentTerms === t.id;
-              return (
-                <Pressable
-                  key={t.id}
-                  onPress={() => setPaymentTerms(t.id)}
-                  style={{
-                    padding: 12,
-                    borderRadius: 12,
-                    borderWidth: 2,
-                    borderColor: active ? colors.seal : colors.parchmentDark,
-                    backgroundColor: active ? colors.seal + '12' : colors.surface,
-                    gap: 4,
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>
-                      {t.title}
-                    </Text>
-                    {active && (
-                      <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: colors.seal, alignItems: 'center', justifyContent: 'center' }}>
-                        <Check size={11} color="#fff" strokeWidth={3} />
-                      </View>
-                    )}
-                  </View>
-                  <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 11, lineHeight: 15 }}>
-                    {t.description}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </Card>
-
         {/* Notes & Conditions */}
         <Card style={{ padding: 16, gap: 10 }}>
           <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-            Buyer Conditions & Observations
+            {t('purchaseOffer.buyerConditions')}
           </Text>
           <TextInput
-            placeholder="Specify any surveyor, notary, or boundary timeline requirements..."
+            ref={notesRef}
+            placeholder={t('purchaseOffer.notesPlaceholder')}
             placeholderTextColor={colors.inkSubtle}
             value={notes}
             onChangeText={setNotes}
@@ -217,10 +170,10 @@ export function PurchaseOfferScreen() {
           <ShieldCheck size={22} color={colors.forest} />
           <View style={{ flex: 1 }}>
             <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>
-              Safe & Guaranteed Escrow
+              {t('purchaseOffer.safeEscrowTitle')}
             </Text>
             <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 11, marginTop: 1 }}>
-              Your offer is non-binding until accepted. Once accepted, funds are escrowed safely until notary title signoff.
+              {t('purchaseOffer.safeEscrowDesc')}
             </Text>
           </View>
         </Card>
@@ -233,7 +186,7 @@ export function PurchaseOfferScreen() {
           disabled={offerMutation.isPending || numPrice <= 0}
           fullWidth
         >
-          {`Submit Escrow Offer (${fmt(numPrice)})`}
+          {`${t('purchaseOffer.submitEscrowOfferPrefix')} (${fmt(numPrice)})`}
         </PillButton>
       </View>
     </Screen>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { View, Text, Modal, Pressable, TextInput, ScrollView } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { View, Text, Pressable, TextInput, ScrollView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { BottomSheetModal } from './BottomSheetModal';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   Search,
@@ -15,8 +15,10 @@ import {
   MessageSquare,
   Activity,
   User,
+  Users,
   Settings as SettingsIcon,
   ChevronRight,
+  ArrowLeftRight,
 } from 'lucide-react-native';
 import { useTheme } from '../theme/ThemeProvider';
 import { FONT } from '../theme/tokens';
@@ -33,7 +35,6 @@ interface ActionItem {
 
 export function QuickActionModal() {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const { quickActionOpen, setQuickActionOpen, activeRole } = useApp();
   const [query, setQuery] = useState('');
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList & MainTabParamList>>();
@@ -66,10 +67,10 @@ export function QuickActionModal() {
             accent: '#0F7A52',
           },
           {
-            icon: FolderKanban,
-            title: 'Create Construction Project',
-            sub: 'Setup 4-step escrow milestone budget',
-            onPress: () => navigateToStack('CreateProject'),
+            icon: Users,
+            title: 'Multi-Sig Co-Signers',
+            sub: 'Manage family & architect dual-approval keys',
+            onPress: () => navigateToStack('CoSignerManagement'),
             accent: '#0F7A52',
           },
           {
@@ -148,7 +149,7 @@ export function QuickActionModal() {
             icon: MapPin,
             title: 'Browse Cadastral Marketplace',
             sub: 'Explore verified parcels in Cameroon',
-            onPress: () => navigateToStack('BrowseLand'),
+            onPress: () => navigateToTab('LandBrowse'),
             accent: '#B23A2E',
           },
         ];
@@ -180,6 +181,12 @@ export function QuickActionModal() {
       title: 'Construction Cost Estimator',
       sub: 'Calculate cement, rebar, sand & gravel quantities',
       onPress: () => navigateToStack('MaterialCostEstimator'),
+    },
+    {
+      icon: ArrowLeftRight,
+      title: 'Currency Converter',
+      sub: 'Real exchange rate & fees for foreign-currency funding',
+      onPress: () => navigateToStack('CurrencyConverter'),
     },
     {
       icon: MessageSquare,
@@ -217,31 +224,8 @@ export function QuickActionModal() {
     : allActions;
 
   return (
-    <Modal
-      visible={quickActionOpen}
-      animationType="slide"
-      transparent
-      onRequestClose={handleClose}
-    >
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-        <Pressable
-          style={{ flex: 1 }}
-          onPress={handleClose}
-          accessibilityRole="button"
-          accessibilityLabel="Dismiss quick search"
-        />
-        <View
-          style={{
-            backgroundColor: colors.surface,
-            borderTopLeftRadius: 24,
-            borderTopRightRadius: 24,
-            borderTopWidth: 1,
-            borderColor: colors.parchmentDark,
-            paddingBottom: Math.max(insets.bottom, 20),
-            maxHeight: '85%',
-          }}
-        >
-          {/* Search Header Input */}
+    <BottomSheetModal visible={quickActionOpen} onClose={handleClose} maxHeightPct={0.85}>
+      {/* Search Header Input */}
           <View
             style={{
               padding: 16,
@@ -365,8 +349,6 @@ export function QuickActionModal() {
               );
             })}
           </ScrollView>
-        </View>
-      </View>
-    </Modal>
+    </BottomSheetModal>
   );
 }

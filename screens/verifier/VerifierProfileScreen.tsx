@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, Pressable, ScrollView, Modal, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -26,7 +26,9 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
 import { useApp } from '../../context/AppContext';
 import { useMyVerifierProfileQuery, useUpsertVerifierProfileMutation } from '../../api/verifier';
+import { apiErrorMessage } from '../../api/client';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
 
 const CAMEROON_REGIONS = ['Centre', 'Littoral', 'Sud', 'Ouest', 'Sud-Ouest', 'Nord-Ouest'];
 const SPECIALTIES = [
@@ -39,6 +41,7 @@ const SPECIALTIES = [
 
 export function VerifierProfileScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const { name, avatarUrl } = useApp();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { show: showToast } = useToast();
@@ -47,11 +50,22 @@ export function VerifierProfileScreen() {
   const upsertMutation = useUpsertVerifierProfileMutation();
 
   const [modalOpen, setModalOpen] = useState(false);
-  const [bio, setBio] = useState(profile?.bio || 'Sworn Civil Engineer & Land Surveyor registered with ONGC Cameroon.');
-  const [selectedRegions, setSelectedRegions] = useState<string[]>(profile?.regions || ['Centre', 'Littoral', 'Sud']);
-  const [selectedSpecialties, setSelectedSpecialties] = useState<string[]>(
-    profile?.specialties || ['Civil Engineering', 'Reinforced Concrete', 'Cadastral Surveying']
-  );
+  const [bio, setBio] = useState('');
+  const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
+  const [selectedSpecialties, setSelectedSpecialties] = useState<string[]>([]);
+
+  // The form's initial useState value only ever runs once, before the
+  // async profile query has resolved — this used to mean editing always
+  // started from a hardcoded fake bio/regions/specialties, silently
+  // overwriting the real saved ones if the user didn't notice and fix
+  // them. Resyncing whenever the edit modal actually opens fixes that.
+  useEffect(() => {
+    if (modalOpen && profile) {
+      setBio(profile.bio);
+      setSelectedRegions(profile.regions);
+      setSelectedSpecialties(profile.specialties);
+    }
+  }, [modalOpen, profile]);
 
   const toggleRegion = (r: string) => {
     setSelectedRegions((prev) => (prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r]));
@@ -69,10 +83,10 @@ export function VerifierProfileScreen() {
         specialties: selectedSpecialties,
       });
 
-      showToast({ title: 'Profile Updated!', description: 'Your verifier credentials have been saved.', tone: 'success' });
+      showToast({ title: t('verifierProfile.profileUpdated'), description: t('verifierProfile.credentialsSaved'), tone: 'success' });
       setModalOpen(false);
-    } catch (err: any) {
-      showToast({ title: 'Error', description: err?.message || 'Could not update profile.', tone: 'error' });
+    } catch (err) {
+      showToast({ title: t('verifierProfile.error'), description: apiErrorMessage(err, t('verifierProfile.couldNotUpdate')), tone: 'error' });
     }
   };
 
@@ -80,7 +94,7 @@ export function VerifierProfileScreen() {
     <Screen
       header={
         <Header
-          title="Verifier Credentials"
+          title={t('verifierProfile.title')}
           back
           action={
             <Pressable
@@ -97,7 +111,7 @@ export function VerifierProfileScreen() {
             >
               <Edit3 size={14} color={colors.forest} />
               <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forest, fontSize: 12 }}>
-                Edit
+                {t('verifierProfile.edit')}
               </Text>
             </Pressable>
           }
@@ -108,31 +122,22 @@ export function VerifierProfileScreen() {
         {/* Verifier Hero Card */}
         <Card style={{ padding: 18, gap: 14 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-            <Avatar name={profile?.fullName || name || 'Dr. Christian Nguema'} avatarUrl={avatarUrl} size={54} />
+            <Avatar name={profile?.fullName || name || t('verifierProfile.verifierFallback')} avatarUrl={avatarUrl} size={54} />
             <View style={{ flex: 1 }}>
               <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 18 }}>
-                {profile?.fullName || 'Dr. Christian Nguema'}
+                {profile?.fullName || name || t('verifierProfile.verifierFallback')}
               </Text>
               <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12, marginTop: 1 }}>
-                Ordre National du Génie Civil (ONGC)
+                {profile?.applicationStatus === 'approved' ? t('verifierProfile.approvedFieldVerifier') : `${t('verifierProfile.applicationStatusPrefix')} ${profile?.applicationStatus ?? t('verifierProfile.pendingFallback')}`}
               </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-                  <Star size={13} color="#FFD700" fill="#FFD700" />
-                  <Text style={{ fontFamily: FONT.mono, color: colors.ink, fontSize: 12, fontWeight: '700' }}>
-                    {profile?.rating || 4.9}
-                  </Text>
-                </View>
-                <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
-                  · {profile?.completedTasksCount || 18} audits completed
-                </Text>
-              </View>
             </View>
           </View>
 
-          <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 13, lineHeight: 18 }}>
-            {profile?.bio || 'Sworn Civil Engineer & Land Surveyor registered with ONGC Cameroon.'}
-          </Text>
+          {profile?.bio ? (
+            <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 13, lineHeight: 18 }}>
+              {profile.bio}
+            </Text>
+          ) : null}
         </Card>
 
         {/* Engineering Specialties */}
@@ -140,7 +145,7 @@ export function VerifierProfileScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <Award size={16} color={colors.forest} />
             <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 15 }}>
-              Auditing Specialties
+              {t('verifierProfile.auditingSpecialties')}
             </Text>
           </View>
 
@@ -168,7 +173,7 @@ export function VerifierProfileScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <MapPin size={16} color={colors.seal} />
             <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 15 }}>
-              Covered Inspection Regions
+              {t('verifierProfile.coveredRegions')}
             </Text>
           </View>
 
@@ -184,7 +189,7 @@ export function VerifierProfileScreen() {
                 }}
               >
                 <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.seal, fontSize: 12 }}>
-                  {reg} Region
+                  {reg} {t('verifierProfile.regionSuffix')}
                 </Text>
               </View>
             ))}
@@ -196,11 +201,11 @@ export function VerifierProfileScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <ShieldCheck size={22} color={colors.forest} />
             <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-              Sworn MboaTrust Verifier Status
+              {t('verifierProfile.swornStatusTitle')}
             </Text>
           </View>
           <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12, lineHeight: 17 }}>
-            Your signed field inspection reports are legally recognized and directly unlock escrow disbursements to contractors and material suppliers.
+            {t('verifierProfile.swornStatusDesc')}
           </Text>
         </Card>
       </View>
@@ -210,15 +215,15 @@ export function VerifierProfileScreen() {
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, gap: 14 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 18 }}>Edit Verifier Credentials</Text>
+              <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 18 }}>{t('verifierProfile.editModalTitle')}</Text>
               <Pressable onPress={() => setModalOpen(false)} hitSlop={6}>
                 <X size={20} color={colors.inkMuted} />
               </Pressable>
             </View>
 
             <TextField
-              label="Bio & Engineering Experience"
-              placeholder="e.g. Master of Civil Engineering with 12 years field experience..."
+              label={t('verifierProfile.bioLabel')}
+              placeholder={t('verifierProfile.bioPlaceholder')}
               value={bio}
               onChangeText={setBio}
               multiline
@@ -226,7 +231,7 @@ export function VerifierProfileScreen() {
             />
 
             <View style={{ gap: 6 }}>
-              <Text style={{ fontFamily: FONT.sansMedium, color: colors.ink, fontSize: 13 }}>Covered Regions</Text>
+              <Text style={{ fontFamily: FONT.sansMedium, color: colors.ink, fontSize: 13 }}>{t('verifierProfile.coveredRegionsLabel')}</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                 {CAMEROON_REGIONS.map((r) => {
                   const active = selectedRegions.includes(r);
@@ -251,7 +256,7 @@ export function VerifierProfileScreen() {
             </View>
 
             <PillButton variant="primary" onPress={handleUpdate} loading={upsertMutation.isPending} fullWidth>
-              Save Credentials
+              {t('verifierProfile.saveCredentials')}
             </PillButton>
           </View>
         </View>

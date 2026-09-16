@@ -20,29 +20,44 @@ import { Header } from '../../components/Header';
 import { Card } from '../../components/Card';
 import { StatusBadge } from '../../components/StatusBadge';
 import { PillButton } from '../../components/PillButton';
+import { AIConstructionDelayCard } from '../../components/AIConstructionDelayCard';
+import { ContractPDFViewerModal } from '../../components/ContractPDFViewerModal';
+import { WhatsAppShareCard } from '../../components/WhatsAppShareCard';
 import { fmt } from '../../components/fmt';
 import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
 import { useProjectQuery } from '../../api/projects';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
 
 type RouteProps = RouteProp<MainStackParamList, 'ProjectDetail'>;
 
+const CAMEROON_REGIONS = ['Adamaoua', 'Centre', 'Est', 'Extrême-Nord', 'Littoral', 'Nord-Ouest', 'Nord', 'Ouest', 'Sud-Ouest', 'Sud'];
+
+/** Real region derivation from the project's own location string — never a
+ * guessed default. `locationName` commonly already includes the region
+ * (e.g. "Douala, Littoral"), matching how PostJobScreen constructs it. */
+function deriveRegion(locationName: string): string | null {
+  return CAMEROON_REGIONS.find((r) => locationName.includes(r)) || null;
+}
+
 export function ProjectDetailScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const route = useRoute<RouteProps>();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { projectId } = route.params;
+  const [contractModalOpen, setContractModalOpen] = useState(false);
 
   const { data: project, isLoading } = useProjectQuery(projectId);
 
   if (isLoading) {
     return (
-      <Screen header={<Header title="Project Details" back />}>
+      <Screen header={<Header title={t('projectDetail.title')} back />}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60 }}>
           <ActivityIndicator size="large" color={colors.forest} />
           <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, marginTop: 12, fontSize: 13 }}>
-            Loading escrow & milestone data...
+            {t('projectDetail.loadingData')}
           </Text>
         </View>
       </Screen>
@@ -51,17 +66,17 @@ export function ProjectDetailScreen() {
 
   if (!project) {
     return (
-      <Screen header={<Header title="Project Details" back />}>
+      <Screen header={<Header title={t('projectDetail.title')} back />}>
         <View style={{ padding: 24, alignItems: 'center', gap: 12 }}>
           <AlertCircle size={40} color={colors.seal} />
           <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 18 }}>
-            Project not found
+            {t('projectDetail.notFoundTitle')}
           </Text>
           <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 13, textAlign: 'center' }}>
-            This project may have been closed or is unavailable.
+            {t('projectDetail.notFoundDesc')}
           </Text>
           <PillButton onPress={() => navigation.goBack()} variant="secondary">
-            Go Back
+            {t('projectDetail.goBack')}
           </PillButton>
         </View>
       </Screen>
@@ -70,6 +85,7 @@ export function ProjectDetailScreen() {
 
   const progress = project.totalAmount > 0 ? Math.min(100, Math.round((project.raised / project.totalAmount) * 100)) : 0;
   const remainingToFund = Math.max(0, project.totalAmount - project.raised);
+  const region = deriveRegion(project.locationName || '');
 
   return (
     <Screen header={<Header title={project.title} subtitle={project.location} back />}>
@@ -118,7 +134,7 @@ export function ProjectDetailScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <ShieldCheck size={14} color={colors.forest} />
                 <Text style={{ fontFamily: FONT.sansMedium, color: colors.forest, fontSize: 13 }}>
-                  Escrow Verified
+                  {t('projectDetail.escrowVerified')}
                 </Text>
               </View>
             </View>
@@ -126,14 +142,61 @@ export function ProjectDetailScreen() {
             <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 13, lineHeight: 19 }}>
               {project.description}
             </Text>
+
+            {/* Legal OHADA Agreement Button */}
+            <Pressable
+              onPress={() => setContractModalOpen(true)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                backgroundColor: colors.parchment,
+                borderRadius: 12,
+                padding: 12,
+                borderWidth: 1,
+                borderColor: colors.parchmentDark,
+                marginTop: 6,
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={{ fontSize: 16 }}>⚖️</Text>
+                <View>
+                  <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 12 }}>
+                    {t('projectDetail.ohadaContractTitle')}
+                  </Text>
+                  <Text style={{ fontFamily: FONT.mono, color: colors.forest, fontSize: 10 }}>
+                    {t('projectDetail.ohadaContractSub')}
+                  </Text>
+                </View>
+              </View>
+              <ArrowRight size={14} color={colors.forest} />
+            </Pressable>
           </View>
         </Card>
+
+        {/* AI Rainy Season & Meteorological Delay Forecast — only shown when a
+            real region can be derived from the project's own location; a
+            hardcoded regional default would misrepresent every project as
+            being in the same place. */}
+        {region ? <AIConstructionDelayCard regionName={region} milestoneType="foundation" /> : null}
+
+        {/* 1-Tap WhatsApp Family Status Card */}
+        <WhatsAppShareCard
+          projectName={project.title}
+          locationName={project.locationName || t('projectDetail.cameroonFallback')}
+          currentMilestone={project.milestones?.[0]?.title || t('projectDetail.foundationPour')}
+          milestoneIndex={1}
+          totalMilestones={project.milestones?.length || 4}
+          completionPercent={progress}
+          totalBudgetXaf={project.totalAmount}
+          contractorName={t('projectDetail.assignedContractor')}
+        />
 
         {/* Financial Escrow Progress Card */}
         <Card style={{ padding: 16, gap: 14 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5 }}>
-              Escrow Funding Progress
+              {t('projectDetail.escrowFundingProgress')}
             </Text>
             <Text style={{ fontFamily: FONT.mono, color: colors.forest, fontSize: 13, fontWeight: '700' }}>
               {progress}%
@@ -156,7 +219,7 @@ export function ProjectDetailScreen() {
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingTop: 6 }}>
             <View>
               <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase' }}>
-                Raised
+                {t('projectDetail.raised')}
               </Text>
               <Text style={{ fontFamily: FONT.serifBold, color: colors.forest, fontSize: 15, marginTop: 2 }}>
                 {fmt(project.raised)}
@@ -165,7 +228,7 @@ export function ProjectDetailScreen() {
 
             <View style={{ alignItems: 'center' }}>
               <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase' }}>
-                Target Budget
+                {t('projectDetail.targetBudget')}
               </Text>
               <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 15, marginTop: 2 }}>
                 {fmt(project.totalAmount)}
@@ -174,7 +237,7 @@ export function ProjectDetailScreen() {
 
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase' }}>
-                Escrow Balance
+                {t('projectDetail.escrowBalance')}
               </Text>
               <Text style={{ fontFamily: FONT.serifBold, color: colors.steel, fontSize: 15, marginTop: 2 }}>
                 {fmt(project.escrowBalance)}
@@ -195,16 +258,24 @@ export function ProjectDetailScreen() {
               }
               fullWidth
             >
-              {`Fund This Project (${fmt(remainingToFund)} Remaining)`}
+              {`${t('projectDetail.fundThisProjectPrefix')}${fmt(remainingToFund)} ${t('projectDetail.remainingSuffix')}`}
             </PillButton>
           )}
         </Card>
+
+        <PillButton variant="secondary" onPress={() => navigation.navigate('CoSignerManagement', { projectId: project.id })} fullWidth>
+          {t('projectDetail.addCommunityCoSigner')}
+        </PillButton>
+
+        <PillButton variant="secondary" onPress={() => navigation.navigate('PooledFunding', { projectId: project.id })} fullWidth>
+          {t('projectDetail.viewGroupFunding')}
+        </PillButton>
 
         {/* Milestones Breakdown Timeline */}
         <View style={{ gap: 12 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5 }}>
-              Milestones & Releases ({project.milestones.length})
+              {t('projectDetail.milestonesAndReleases')} ({project.milestones.length})
             </Text>
           </View>
 
@@ -218,7 +289,7 @@ export function ProjectDetailScreen() {
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontFamily: FONT.mono, color: colors.forest, fontSize: 10, textTransform: 'uppercase', fontWeight: '700' }}>
-                      Milestone {index + 1}
+                      {t('projectDetail.milestoneLabel')} {index + 1}
                     </Text>
                     <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 15, marginTop: 2 }}>
                       {m.title}
@@ -249,7 +320,7 @@ export function ProjectDetailScreen() {
                     >
                       <Video size={12} color={colors.inkSubtle} />
                       <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10 }}>
-                        Video Inspection
+                        {t('projectDetail.videoInspection')}
                       </Text>
                     </View>
                   )}
@@ -267,7 +338,7 @@ export function ProjectDetailScreen() {
                     >
                       <Users size={12} color={colors.inkSubtle} />
                       <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10 }}>
-                        Co-Signer Approval
+                        {t('projectDetail.coSignerApproval')}
                       </Text>
                     </View>
                   )}
@@ -286,7 +357,7 @@ export function ProjectDetailScreen() {
                 >
                   <View>
                     <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase' }}>
-                      Milestone Amount
+                      {t('projectDetail.milestoneAmount')}
                     </Text>
                     <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 15, marginTop: 1 }}>
                       {fmt(m.amount)}
@@ -312,7 +383,7 @@ export function ProjectDetailScreen() {
                       }}
                     >
                       <Text style={{ fontFamily: FONT.sansSemiBold, color: '#111', fontSize: 12 }}>
-                        Review Proof
+                        {t('projectDetail.reviewProof')}
                       </Text>
                       <ArrowRight size={13} color="#111" />
                     </Pressable>
@@ -336,21 +407,21 @@ export function ProjectDetailScreen() {
                       }}
                     >
                       <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.seal, fontSize: 11 }}>
-                        Disputed
+                        {t('projectDetail.disputed')}
                       </Text>
                     </Pressable>
                   ) : isReleased ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                       <CheckCircle2 size={15} color={colors.forest} />
                       <Text style={{ fontFamily: FONT.sansMedium, color: colors.forest, fontSize: 12 }}>
-                        Funds Released
+                        {t('projectDetail.fundsReleased')}
                       </Text>
                     </View>
                   ) : (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                       <Lock size={13} color={colors.inkSubtle} />
                       <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
-                        Escrow Locked
+                        {t('projectDetail.escrowLocked')}
                       </Text>
                     </View>
                   )}
@@ -360,6 +431,24 @@ export function ProjectDetailScreen() {
           })}
         </View>
       </View>
+
+      {/* OHADA Legal Contract PDF Modal */}
+      <ContractPDFViewerModal
+        visible={contractModalOpen}
+        contractParams={{
+          funderName: project.ownerName,
+          contractorName: t('projectDetail.assignedContractor'),
+          projectName: project.title,
+          location: project.locationName || 'Cameroon',
+          totalBudgetXaf: project.totalAmount,
+          milestones: (project.milestones || []).map((m) => ({
+            title: m.title,
+            amountXaf: m.amount,
+            durationDays: 30,
+          })),
+        }}
+        onClose={() => setContractModalOpen(false)}
+      />
     </Screen>
   );
 }

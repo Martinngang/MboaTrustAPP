@@ -4,7 +4,6 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   Briefcase,
-  MapPin,
   Clock,
   CheckCircle2,
   AlertCircle,
@@ -19,52 +18,30 @@ import { EmptyState } from '../../components/EmptyState';
 import { fmt } from '../../components/fmt';
 import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
-import { useMyBidsQuery, type MyBidItem } from '../../api/contracts';
+import { useBidsQuery, type Bid } from '../../api/tenders';
+import { useApp } from '../../context/AppContext';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
+import type { TranslationKey } from '../../i18n/translations';
 
 const FILTER_TABS = ['All', 'Pending', 'Accepted', 'Rejected'] as const;
+const FILTER_TAB_KEY: Record<(typeof FILTER_TABS)[number], TranslationKey> = {
+  All: 'myBids.tabAll',
+  Pending: 'myBids.tabPending',
+  Accepted: 'myBids.tabAccepted',
+  Rejected: 'myBids.tabRejected',
+};
 
 export function MyBidsScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const [activeTab, setActiveTab] = useState<(typeof FILTER_TABS)[number]>('All');
 
-  const { data: realBids, isLoading } = useMyBidsQuery();
+  const { user } = useApp();
+  const { data: bids, isLoading } = useBidsQuery({ contractorId: user?._id });
 
-  // Sample bids if not yet populated from backend
-  const bids: MyBidItem[] =
-    realBids && realBids.length > 0
-      ? realBids
-      : [
-          {
-            id: 'bid-101',
-            projectId: 'proj-demo-1',
-            projectTitle: 'Residential Foundation & Reinforced Masonry',
-            category: 'Masonry & Concrete',
-            location: 'Odza, Yaoundé (Centre)',
-            proposedAmount: 4200000,
-            targetBudget: 4500000,
-            estimatedDurationDays: 28,
-            notes: 'Masonry crew with laser-level surveyor ready for deployment.',
-            status: 'accepted',
-            createdAt: '2 days ago',
-          },
-          {
-            id: 'bid-102',
-            projectId: 'proj-demo-2',
-            projectTitle: 'Borehole Drilling & Solar Pump System',
-            category: 'Water & Sanitation',
-            location: 'Mbalmayo (Centre)',
-            proposedAmount: 3800000,
-            targetBudget: 4000000,
-            estimatedDurationDays: 14,
-            notes: 'Geophysical deep borehole rig and 5000L tower installation.',
-            status: 'pending',
-            createdAt: 'Yesterday',
-          },
-        ];
-
-  const filteredBids = bids.filter((b) => {
+  const filteredBids = (bids || []).filter((b) => {
     if (activeTab === 'All') return true;
     if (activeTab === 'Pending') return b.status === 'pending' || b.status === 'countered';
     if (activeTab === 'Accepted') return b.status === 'accepted';
@@ -76,8 +53,8 @@ export function MyBidsScreen() {
     <Screen
       header={
         <Header
-          title="My Proposals & Bids"
-          subtitle={`${filteredBids.length} tenders`}
+          title={t('myBids.title')}
+          subtitle={`${filteredBids.length} ${t('myBids.tenders')}`}
           back
         />
       }
@@ -110,7 +87,7 @@ export function MyBidsScreen() {
                     color: active ? colors.steel : colors.inkMuted,
                   }}
                 >
-                  {tab}
+                  {t(FILTER_TAB_KEY[tab])}
                 </Text>
               </Pressable>
             );
@@ -125,8 +102,8 @@ export function MyBidsScreen() {
         ) : filteredBids.length === 0 ? (
           <EmptyState
             icon={Briefcase}
-            title="No proposals found"
-            description="You haven't submitted any bids in this category yet."
+            title={t('myBids.noProposalsFound')}
+            description={t('myBids.noProposalsDesc')}
           />
         ) : (
           filteredBids.map((bid) => {
@@ -137,16 +114,28 @@ export function MyBidsScreen() {
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 16 }}>
-                      {bid.projectTitle}
+                      {bid.jobTitle || t('myBids.tenderFallback')}
                     </Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
-                      <MapPin size={12} color={colors.inkSubtle} />
-                      <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
-                        {bid.location} · {bid.category}
+                  </View>
+                  {bid.status === 'pending' ? (
+                    <View
+                      style={{
+                        paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
+                        backgroundColor: bid.lastProposedBy === 'contractor' ? colors.steel + '18' : colors.amber + '20',
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontFamily: FONT.mono, fontSize: 9, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5,
+                          color: bid.lastProposedBy === 'contractor' ? colors.steel : colors.amber,
+                        }}
+                      >
+                        {bid.lastProposedBy === 'contractor' ? t('myBids.awaitingFunder') : t('myBids.yourTurn')}
                       </Text>
                     </View>
-                  </View>
-                  <StatusBadge status={bid.status} />
+                  ) : (
+                    <StatusBadge status={bid.status} />
+                  )}
                 </View>
 
                 {/* Proposed Metrics */}
@@ -162,19 +151,19 @@ export function MyBidsScreen() {
                 >
                   <View>
                     <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase' }}>
-                      Your Proposed Bid
+                      {t('myBids.yourProposedBid')}
                     </Text>
                     <Text style={{ fontFamily: FONT.serifBold, color: colors.forest, fontSize: 16, marginTop: 1 }}>
-                      {fmt(bid.proposedAmount)}
+                      {fmt(bid.price)}
                     </Text>
                   </View>
 
                   <View style={{ alignItems: 'flex-end' }}>
                     <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase' }}>
-                      Timeline
+                      {t('myBids.timeline')}
                     </Text>
                     <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13, marginTop: 1 }}>
-                      {bid.estimatedDurationDays} Days
+                      {bid.timelineDays} {t('myBids.days')}
                     </Text>
                   </View>
                 </View>
@@ -192,12 +181,7 @@ export function MyBidsScreen() {
                 >
                   {isAccepted ? (
                     <Pressable
-                      onPress={() =>
-                        navigation.navigate('MilestoneSubmit', {
-                          projectId: bid.projectId,
-                          milestoneTitle: 'Foundation & Earthworks',
-                        })
-                      }
+                      onPress={() => navigation.navigate('ContractDetail', { bidId: bid.id })}
                       style={{
                         flex: 1,
                         flexDirection: 'row',
@@ -211,12 +195,12 @@ export function MyBidsScreen() {
                     >
                       <CheckCircle2 size={15} color="#fff" />
                       <Text style={{ fontFamily: FONT.sansSemiBold, color: '#fff', fontSize: 13 }}>
-                        Submit Milestone Proof
+                        {t('myBids.viewContract')}
                       </Text>
                     </Pressable>
-                  ) : (
+                  ) : bid.status === 'pending' ? (
                     <Pressable
-                      onPress={() => navigation.navigate('JobDetail', { jobId: bid.projectId })}
+                      onPress={() => navigation.navigate('Negotiation', { bidId: bid.id })}
                       style={{
                         flex: 1,
                         flexDirection: 'row',
@@ -229,7 +213,26 @@ export function MyBidsScreen() {
                       }}
                     >
                       <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>
-                        View Tender Details
+                        {t('myBids.viewNegotiation')}
+                      </Text>
+                      <ArrowRight size={14} color={colors.ink} />
+                    </Pressable>
+                  ) : (
+                    <Pressable
+                      onPress={() => navigation.navigate('JobDetail', { jobId: bid.jobId })}
+                      style={{
+                        flex: 1,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        backgroundColor: colors.parchment,
+                        paddingVertical: 10,
+                        borderRadius: 12,
+                      }}
+                    >
+                      <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>
+                        {t('myBids.viewTenderDetails')}
                       </Text>
                       <ArrowRight size={14} color={colors.ink} />
                     </Pressable>

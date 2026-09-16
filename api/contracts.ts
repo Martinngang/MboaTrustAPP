@@ -1,146 +1,111 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
-import type { Project, BackendProject } from './projects';
-import { mapProject } from './projects';
 
-export interface ContractorJob {
-  id: string;
-  title: string;
-  category: string;
-  location: string;
-  description: string;
-  budget: number;
-  bidsCount: number;
-  durationDays: number;
-  status: string;
-  createdAt: string;
-}
+// Tender/bid browsing and submission moved to api/tenders.ts, ported to
+// exactly match the real backend contract (this file's previous versions of
+// those hooks used wrong field names — `amount`/`estimatedDurationDays`
+// instead of the real `price`/`timelineDays` — so every real bid submission
+// was rejected by the backend's own validator). What remains here is the
+// separate Contract/evidence/payout domain.
 
-export interface MyBidItem {
+export interface Contract {
   id: string;
   projectId: string;
   projectTitle: string;
-  category: string;
-  location: string;
-  proposedAmount: number;
-  targetBudget: number;
-  estimatedDurationDays: number;
-  notes: string;
-  status: 'pending' | 'accepted' | 'rejected' | 'countered';
+  totalAmount: number;
+  bidId: string;
+  generatedDocumentText: string;
+  generatedDocumentUrl: string;
+  status: 'active' | 'completed' | 'terminated';
   createdAt: string;
 }
 
-export interface ContractorCertification {
-  id: string;
-  title: string;
-  issuingAuthority: string;
-  yearIssued: string;
-  verified: boolean;
-  documentUrl?: string;
+interface BackendContract {
+  _id: string;
+  projectId: { _id: string; title: string; totalAmount: number } | string;
+  bidId: string;
+  generatedDocumentText: string;
+  generatedDocumentUrl: string;
+  status: 'active' | 'completed' | 'terminated';
+  createdAt: string;
 }
 
-export interface WithdrawableBalance {
-  totalEarned: number;
-  escrowPendingRelease: number;
-  withdrawableAmount: number;
-  currency: string;
+function mapContract(doc: BackendContract): Contract {
+  return {
+    id: doc._id,
+    projectId: typeof doc.projectId === 'object' ? doc.projectId._id : doc.projectId,
+    projectTitle: typeof doc.projectId === 'object' ? doc.projectId.title : 'Project',
+    totalAmount: typeof doc.projectId === 'object' ? doc.projectId.totalAmount : 0,
+    bidId: doc.bidId,
+    generatedDocumentText: doc.generatedDocumentText || '',
+    generatedDocumentUrl: doc.generatedDocumentUrl || '',
+    status: doc.status,
+    createdAt: doc.createdAt,
+  };
 }
 
-export function useJobsQuery(params?: { category?: string; search?: string }) {
+/** No filter = every real contract the caller is a party to — as funder
+ * (via project ownership) or contractor (via their bid) — server-scoped the
+ * same way land offers/escrows are. */
+export function useContractsQuery(filter: { projectId?: string; bidId?: string; status?: string } = {}) {
   return useQuery({
-    queryKey: ['jobs', params],
-    queryFn: async (): Promise<ContractorJob[]> => {
-      try {
-        const { data } = await api.get<{ data: BackendProject[] }>('/projects', {
-          params: { projectType: 'tender', ...params },
-        });
-        return (data.data || []).map((p) => ({
-          id: p._id,
-          title: p.title || 'Contractor Tender',
-          category: p.category || 'Masonry',
-          location: p.locationName || 'Cameroon',
-          description: p.description || '',
-          budget: p.totalAmount || 0,
-          bidsCount: 2,
-          durationDays: 30,
-          status: p.status || 'open',
-          createdAt: new Date().toISOString(),
-        }));
-      } catch {
-        return [];
-      }
-    },
-    staleTime: 15_000,
-  });
-}
-
-export function useMyBidsQuery() {
-  return useQuery({
-    queryKey: ['bids', 'mine'],
-    queryFn: async (): Promise<MyBidItem[]> => {
-      try {
-        const { data } = await api.get<{ data: any[] }>('/bids');
-        return (data.data || []).map((b) => ({
-          id: b._id,
-          projectId: typeof b.projectId === 'object' ? b.projectId._id : b.projectId,
-          projectTitle: typeof b.projectId === 'object' ? b.projectId.title : 'Residential Construction Tender',
-          category: typeof b.projectId === 'object' ? b.projectId.category : 'Masonry',
-          location: typeof b.projectId === 'object' ? b.projectId.locationName : 'Odza, Yaoundé',
-          proposedAmount: b.amount || 0,
-          targetBudget: typeof b.projectId === 'object' ? b.projectId.totalAmount : b.amount,
-          estimatedDurationDays: b.estimatedDurationDays || 30,
-          notes: b.notes || '',
-          status: b.status || 'pending',
-          createdAt: b.createdAt || new Date().toISOString(),
-        }));
-      } catch {
-        return [];
-      }
+    queryKey: ['contracts', filter],
+    queryFn: async (): Promise<Contract[]> => {
+      const { data } = await api.get<{ data: BackendContract[] }>('/contracts', { params: filter });
+      return data.data.map(mapContract);
     },
     staleTime: 10_000,
   });
 }
 
-export interface SubmitBidInput {
-  projectId: string;
-  amount: number;
-  estimatedDurationDays: number;
-  notes: string;
-}
-
-export function useSubmitBidMutation() {
+function useContractAction(action: 'complete' | 'terminate') {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: SubmitBidInput) => {
-      const { data } = await api.post('/bids', input);
-      return data;
+    mutationFn: async (id: string) => {
+      const { data } = await api.post<{ data: BackendContract }>(`/contracts/${id}/${action}`);
+      return mapContract(data.data);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['bids'] });
-      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['contracts'] });
     },
   });
 }
 
+export const useCompleteContractMutation = () => useContractAction('complete');
+export const useTerminateContractMutation = () => useContractAction('terminate');
+
 export interface SubmitEvidenceInput {
   projectId: string;
   milestoneId: string;
-  fileUrl: string;
+  file: { uri: string; fileName?: string | null; mimeType?: string | null };
   notes: string;
-  geotag?: { lat: number; lng: number };
+  geotagLat?: number;
+  geotagLng?: number;
+  placeName?: string;
 }
 
+/** Real multipart upload to POST /projects/:id/milestones/:milestoneId/evidence
+ * (projectValidators.submitEvidence: flat geotagLat/geotagLng fields, a real
+ * uploaded `file`, not a nested `geotag` object or a bare fileUrl string). */
 export function useSubmitMilestoneEvidenceMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ projectId, milestoneId, fileUrl, notes, geotag }: SubmitEvidenceInput) => {
-      const { data } = await api.post(`/projects/${projectId}/milestones/${milestoneId}/evidence`, {
-        fileUrl,
-        notes,
-        type: 'photo',
-        geotag,
+    mutationFn: async ({ projectId, milestoneId, file, notes, geotagLat, geotagLng, placeName }: SubmitEvidenceInput) => {
+      const form = new FormData();
+      form.append('type', 'photo');
+      form.append('file', {
+        uri: file.uri,
+        name: file.fileName ?? 'evidence.jpg',
+        type: file.mimeType ?? 'image/jpeg',
+      } as unknown as Blob);
+      if (notes) form.append('notes', notes);
+      if (geotagLat != null) form.append('geotagLat', String(geotagLat));
+      if (geotagLng != null) form.append('geotagLng', String(geotagLng));
+      if (placeName) form.append('placeName', placeName);
+      const { data } = await api.post(`/projects/${projectId}/milestones/${milestoneId}/evidence`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
-      return data;
+      return data.data;
     },
     onSuccess: (_, { projectId }) => {
       qc.invalidateQueries({ queryKey: ['project', projectId] });
@@ -150,38 +115,64 @@ export function useSubmitMilestoneEvidenceMutation() {
   });
 }
 
+export interface WithdrawableEscrow {
+  id: string;
+  projectTitle: string;
+  netAmount: number;
+  currency: string;
+  createdAt: string;
+}
+
+export interface WithdrawableBalance {
+  available: number;
+  currency: string;
+  escrows: WithdrawableEscrow[];
+}
+
+interface BackendEscrow {
+  _id: string;
+  netAmount: number;
+  currency: string;
+  createdAt: string;
+  projectId?: { _id: string; title: string } | string | null;
+}
+
+/** Real shape from GET /escrows/withdrawable (escrowController.getWithdrawable)
+ * — a single `available` total plus the underlying escrow records, no
+ * "total earned" vs "pending escrow" split (that distinction never existed
+ * on the backend). */
 export function useWithdrawableBalanceQuery() {
   return useQuery({
     queryKey: ['escrows', 'withdrawable'],
     queryFn: async (): Promise<WithdrawableBalance> => {
-      try {
-        const { data } = await api.get<{ data: WithdrawableBalance }>('/escrows/withdrawable');
-        return data.data;
-      } catch {
-        return {
-          totalEarned: 6800000,
-          escrowPendingRelease: 2500000,
-          withdrawableAmount: 4300000,
-          currency: 'XAF',
-        };
-      }
+      const { data } = await api.get<{ data: { available: number; currency: string; escrows: BackendEscrow[] } }>('/escrows/withdrawable');
+      return {
+        available: data.data.available,
+        currency: data.data.currency,
+        escrows: data.data.escrows.map((e) => ({
+          id: e._id,
+          projectTitle: typeof e.projectId === 'object' && e.projectId ? e.projectId.title : 'Project',
+          netAmount: e.netAmount,
+          currency: e.currency,
+          createdAt: e.createdAt,
+        })),
+      };
     },
     staleTime: 15_000,
   });
 }
 
-export interface WithdrawInput {
-  amount: number;
-  paymentMethod: 'mtn_momo' | 'orange_money';
-  phoneNumber: string;
-}
-
+/** Marks every currently-available escrow as withdrawn — money already
+ * moved to the contractor's payout method automatically at milestone-release
+ * time (see projectController.releaseMilestoneEscrow); this never
+ * re-disburses or takes a fee, it only records the claim. No amount choice,
+ * no payment-method selection — the real endpoint takes no body at all. */
 export function useWithdrawMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: WithdrawInput) => {
-      const { data } = await api.post('/escrows/withdraw', input);
-      return data;
+    mutationFn: async () => {
+      const { data } = await api.post<{ data: { amount: number; currency: string; count: number; withdrawnAt: string } }>('/escrows/withdraw', {});
+      return data.data;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['escrows', 'withdrawable'] });
@@ -190,49 +181,100 @@ export function useWithdrawMutation() {
   });
 }
 
+export interface ContractorCertification {
+  id: string;
+  title: string;
+  issuer: string;
+  issuedAt: string | null;
+  verified: boolean;
+  rejected: boolean;
+  documentUrl?: string;
+}
+
+function mapCertification(c: any): ContractorCertification {
+  return {
+    id: c._id || c.id,
+    title: c.title,
+    issuer: c.issuer,
+    issuedAt: c.issuedAt,
+    verified: Boolean(c.verified),
+    rejected: Boolean(c.rejected),
+    documentUrl: c.documentUrl,
+  };
+}
+
+/** GET /contractor-certifications/me — the bare `/contractor-certifications`
+ * route is the admin review queue (requireRole('admin')); a contractor
+ * calling it directly gets a 403. */
 export function useCertificationsQuery() {
   return useQuery({
     queryKey: ['contractor-certifications'],
     queryFn: async (): Promise<ContractorCertification[]> => {
-      try {
-        const { data } = await api.get<{ data: any[] }>('/contractor-certifications');
-        return (data.data || []).map((c) => ({
-          id: c._id || c.id,
-          title: c.title,
-          issuingAuthority: c.issuingAuthority,
-          yearIssued: c.yearIssued || '2023',
-          verified: Boolean(c.verified ?? true),
-          documentUrl: c.documentUrl,
-        }));
-      } catch {
-        return [
-          {
-            id: 'cert-1',
-            title: 'Ordre National du Génie Civil (ONGC)',
-            issuingAuthority: 'Ministry of Public Works Cameroon',
-            yearIssued: '2022',
-            verified: true,
-          },
-          {
-            id: 'cert-2',
-            title: 'Certified Master Mason & Structural Concrete',
-            issuingAuthority: 'Cameroon Chamber of Commerce (CCIMA)',
-            yearIssued: '2023',
-            verified: true,
-          },
-        ];
-      }
+      const { data } = await api.get<{ data: any[] }>('/contractor-certifications/me');
+      return (data.data || []).map(mapCertification);
     },
     staleTime: 30_000,
   });
 }
 
+/** GET /contractor-certifications/:userId — public-view-by-id, for a
+ * funder evaluating a contractor's portfolio (or the contractor's own "how
+ * funders see me" view of the same screen). */
+export function useCertificationsForUserQuery(userId: string | undefined) {
+  return useQuery({
+    queryKey: ['contractor-certifications', userId],
+    queryFn: async (): Promise<ContractorCertification[]> => {
+      const { data } = await api.get<{ data: any[] }>(`/contractor-certifications/${userId}`);
+      return (data.data || []).map(mapCertification);
+    },
+    enabled: Boolean(userId),
+    staleTime: 30_000,
+  });
+}
+
+export interface AddCertificationInput {
+  title: string;
+  issuer: string;
+  issuedAt?: string;
+  file?: { uri: string; fileName?: string | null; mimeType?: string | null };
+}
+
+/** `verified` is never sent — it's admin-only and defaults false on the
+ * backend; a freshly added certification is always "pending review", never
+ * pre-verified. */
 export function useAddCertificationMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { title: string; issuingAuthority: string; yearIssued: string }) => {
-      const { data } = await api.post('/contractor-certifications', input);
+    mutationFn: async ({ title, issuer, issuedAt, file }: AddCertificationInput) => {
+      const form = new FormData();
+      form.append('title', title);
+      form.append('issuer', issuer);
+      if (issuedAt) form.append('issuedAt', issuedAt);
+      if (file) {
+        form.append('file', {
+          uri: file.uri,
+          name: file.fileName ?? 'certificate.jpg',
+          type: file.mimeType ?? 'image/jpeg',
+        } as unknown as Blob);
+      }
+      const { data } = await api.post('/contractor-certifications', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
       return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contractor-certifications'] });
+    },
+  });
+}
+
+/** DELETE /contractor-certifications/:id — mirrors
+ * MboaTrustFrontend/src/api/certifications.ts's useRemoveCertificationMutation. */
+export function useRemoveCertificationMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (certId: string) => {
+      await api.delete(`/contractor-certifications/${certId}`);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['contractor-certifications'] });

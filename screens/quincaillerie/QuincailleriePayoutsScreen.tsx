@@ -1,189 +1,114 @@
-import { useState } from 'react';
-import { View, Text, Pressable, ActivityIndicator, ScrollView } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import {
-  Wallet,
-  Smartphone,
-  Check,
-  ShieldCheck,
-  ArrowDownLeft,
-  Store,
-  CreditCard,
-} from 'lucide-react-native';
+import { View, Text, ActivityIndicator } from 'react-native';
+import { ShieldCheck, Smartphone, Truck } from 'lucide-react-native';
 import { Screen } from '../../components/Screen';
 import { Header } from '../../components/Header';
 import { Card } from '../../components/Card';
 import { StatusBadge } from '../../components/StatusBadge';
-import { PillButton } from '../../components/PillButton';
-import { useToast } from '../../components/Toast';
+import { EmptyState } from '../../components/EmptyState';
 import { fmt } from '../../components/fmt';
 import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
-import { useMyQuincaillerieProfileQuery } from '../../api/materials';
-import { useWithdrawMutation } from '../../api/contracts';
-import type { MainStackParamList } from '../../navigation/types';
+import { useMySupplierProfileQuery } from '../../api/supplierProfiles';
+import { useMaterialOrdersForMySupplierQuery } from '../../api/materialOrders';
+import { useTranslation } from '../../i18n/useTranslation';
 
+// Real earnings, not a manual withdraw flow: the backend has no supplier
+// payout endpoint yet — Escrow.payeeType supports 'supplier', but
+// /escrows/withdraw only resolves 'contractor'/'recipient' payees (see
+// escrowController.js's withdrawableFilter) — and web's own
+// SupplierDashboardScreen has no withdraw button either, just a computed
+// "Total earnings" figure from confirmed/delivered orders. The previous
+// version of this screen had an "Instant Payout" button wired to the
+// *contractor's* withdraw mutation with hardcoded fallback numbers
+// (2,753,500 / 1,446,500 / 4,200,000 XAF) — none of that corresponded to
+// anything real, so it's gone rather than kept as a fake action.
 export function QuincailleriePayoutsScreen() {
   const { colors } = useTheme();
-  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-  const { show: showToast } = useToast();
+  const { t } = useTranslation();
 
-  const { data: profile, isLoading } = useMyQuincaillerieProfileQuery();
-  const withdrawMutation = useWithdrawMutation();
+  const { data: profile } = useMySupplierProfileQuery();
+  const isVerified = profile?.verificationStatus === 'verified';
+  const { data: orders = [], isLoading } = useMaterialOrdersForMySupplierQuery('all', isVerified);
 
-  const availableAmount = profile?.availablePayout || 2753500;
-
-  const handleInstantPayout = async () => {
-    try {
-      await withdrawMutation.mutateAsync({
-        amount: availableAmount,
-        paymentMethod: profile?.paymentProvider || 'mtn_momo',
-        phoneNumber: profile?.payoutPhoneNumber || '677001122',
-      });
-      showToast({
-        title: 'Settlement Initiated!',
-        description: `${fmt(availableAmount)} sent to store ${profile?.paymentProvider === 'orange_money' ? 'Orange Money' : 'MTN MoMo'}.`,
-        tone: 'success',
-      });
-      navigation.goBack();
-    } catch (err: any) {
-      showToast({ title: 'Payout Error', description: err?.message || 'Could not process payout.', tone: 'error' });
-    }
-  };
-
-  const sampleDisbursements = [
-    {
-      id: 'disb-1',
-      orderNumber: 'ORD-2026-641',
-      project: 'Villa Odza Foundation',
-      amount: 1446500,
-      date: 'Aug 26, 2026',
-      status: 'completed',
-    },
-    {
-      id: 'disb-2',
-      orderNumber: 'ORD-2026-420',
-      project: 'Mbalmayo Well Pumping Station',
-      amount: 1307000,
-      date: 'Aug 19, 2026',
-      status: 'completed',
-    },
-  ];
+  const settled = orders.filter((o) => o.status === 'delivered');
+  const pending = orders.filter((o) => o.status === 'confirmed' || o.status === 'out_for_delivery');
+  const totalSettled = settled.reduce((s, o) => s + o.totalAmount, 0);
+  const totalPending = pending.reduce((s, o) => s + o.totalAmount, 0);
 
   return (
-    <Screen header={<Header title="Store Escrow Payouts" back />}>
+    <Screen header={<Header title={t('quincailleriePayouts.title')} back />}>
       <View style={{ padding: 16, gap: 18 }}>
-        {/* Settlement Hero Card */}
         <Card style={{ padding: 18, backgroundColor: colors.forestDark, gap: 14 }}>
           <Text style={{ fontFamily: FONT.mono, color: 'rgba(255,255,255,0.7)', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.5 }}>
-            Available Store Settlement Balance
+            {t('quincailleriePayouts.deliveredAndSettled')}
           </Text>
-
-          <Text style={{ fontFamily: FONT.serifBold, color: '#fff', fontSize: 28 }}>
-            {fmt(availableAmount)}
-          </Text>
-
+          <Text style={{ fontFamily: FONT.serifBold, color: '#fff', fontSize: 28 }}>{fmt(totalSettled)}</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 12, padding: 10 }}>
               <Text style={{ fontFamily: FONT.mono, color: 'rgba(255,255,255,0.7)', fontSize: 9, textTransform: 'uppercase' }}>
-                Pending Delivery
+                {t('quincailleriePayouts.inProgress')}
               </Text>
-              <Text style={{ fontFamily: FONT.serifBold, color: '#fff', fontSize: 13, marginTop: 2 }}>
-                {fmt(profile?.pendingEscrow || 1446500)}
-              </Text>
+              <Text style={{ fontFamily: FONT.serifBold, color: '#fff', fontSize: 13, marginTop: 2 }}>{fmt(totalPending)}</Text>
             </View>
-
             <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 12, padding: 10 }}>
               <Text style={{ fontFamily: FONT.mono, color: 'rgba(255,255,255,0.7)', fontSize: 9, textTransform: 'uppercase' }}>
-                Lifetime Sales
+                {t('quincailleriePayouts.completedOrders')}
               </Text>
-              <Text style={{ fontFamily: FONT.serifBold, color: '#fff', fontSize: 13, marginTop: 2 }}>
-                {fmt(profile?.totalRevenue || 4200000)}
-              </Text>
+              <Text style={{ fontFamily: FONT.serifBold, color: '#fff', fontSize: 13, marginTop: 2 }}>{profile?.completedOrderCount ?? settled.length}</Text>
             </View>
           </View>
         </Card>
 
-        {/* Payout Channel Configuration */}
-        <Card style={{ padding: 16, gap: 12 }}>
-          <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 15 }}>
-            Registered Store Payout Method
-          </Text>
-
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 12,
-              padding: 14,
-              borderRadius: 14,
-              backgroundColor: colors.parchment,
-            }}
-          >
-            <View
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 10,
-                backgroundColor: profile?.paymentProvider === 'orange_money' ? '#FF6600' : '#FFCC00',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Smartphone size={20} color={profile?.paymentProvider === 'orange_money' ? '#fff' : '#111'} />
+        {profile?.paymentProvider ? (
+          <Card style={{ padding: 16, gap: 10 }}>
+            <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>{t('quincailleriePayouts.registeredPayoutMethod')}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 12, backgroundColor: colors.parchment }}>
+              <View
+                style={{
+                  width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+                  backgroundColor: profile.paymentProvider === 'orange_money' ? '#FF6600' : '#FFCC00',
+                }}
+              >
+                <Smartphone size={18} color={profile.paymentProvider === 'orange_money' ? '#fff' : '#111'} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>
+                  {profile.paymentProvider === 'orange_money' ? t('payout.omLabel') : t('payout.momoLabel')}
+                </Text>
+                <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 11, marginTop: 1 }}>{profile.payoutPhoneNumber}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <ShieldCheck size={14} color={colors.forest} />
+                <Text style={{ fontFamily: FONT.mono, color: colors.forest, fontSize: 10, fontWeight: '700' }}>{t('quincailleriePayouts.onFile')}</Text>
+              </View>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-                {profile?.paymentProvider === 'orange_money' ? 'Orange Money (+237)' : 'MTN Mobile Money (+237)'}
-              </Text>
-              <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 12, marginTop: 1 }}>
-                Account: {profile?.payoutPhoneNumber || '677001122'}
-              </Text>
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <ShieldCheck size={14} color={colors.forest} />
-              <Text style={{ fontFamily: FONT.mono, color: colors.forest, fontSize: 10, fontWeight: '700' }}>
-                Active
-              </Text>
-            </View>
-          </View>
+            <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 11 }}>
+              {t('quincailleriePayouts.autoReleaseExplainer')}
+            </Text>
+          </Card>
+        ) : null}
 
-          <PillButton
-            variant="primary"
-            onPress={handleInstantPayout}
-            loading={withdrawMutation.isPending}
-            disabled={withdrawMutation.isPending || availableAmount <= 0}
-            fullWidth
-          >
-            {`Withdraw ${fmt(availableAmount)} to MoMo`}
-          </PillButton>
-        </Card>
-
-        {/* Disbursement History */}
         <View style={{ gap: 10 }}>
           <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5 }}>
-            Disbursement Settlements
+            {t('quincailleriePayouts.settledOrders')}
           </Text>
-
-          {sampleDisbursements.map((d) => (
-            <Card key={d.id} style={{ padding: 14, gap: 4 }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={{ fontFamily: FONT.mono, color: colors.amber, fontSize: 11, fontWeight: '700' }}>
-                  {d.orderNumber}
-                </Text>
-                <Text style={{ fontFamily: FONT.serifBold, color: colors.forest, fontSize: 14 }}>
-                  +{fmt(d.amount)}
-                </Text>
-              </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          {isLoading ? (
+            <ActivityIndicator color={colors.forest} style={{ marginTop: 12 }} />
+          ) : settled.length === 0 ? (
+            <EmptyState icon={Truck} title={t('quincailleriePayouts.noSettledYet')} description={t('quincailleriePayouts.noSettledDesc')} />
+          ) : (
+            settled.map((o) => (
+              <Card key={o.id} style={{ padding: 14, gap: 4 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontFamily: FONT.serifBold, color: colors.forest, fontSize: 14 }}>{fmt(o.totalAmount)}</Text>
+                  <StatusBadge status={o.status} />
+                </View>
                 <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
-                  {d.project} · {d.date}
+                  {o.projectTitle} · {o.milestoneTitle}
                 </Text>
-                <StatusBadge status={d.status} />
-              </View>
-            </Card>
-          ))}
+              </Card>
+            ))
+          )}
         </View>
       </View>
     </Screen>

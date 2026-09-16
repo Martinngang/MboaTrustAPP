@@ -19,7 +19,7 @@ import { FONT } from '../theme/tokens';
 import { inspectConstructionPhoto, type AIPhotoInspectionResult } from '../api/geminiAI';
 
 interface Props {
-  onPhotoSelected?: (base64: string, mimeType: string) => void;
+  onPhotoSelected?: (base64: string, mimeType: string, uri: string) => void;
   onAnalysisComplete?: (result: AIPhotoInspectionResult) => void;
   label?: string;
 }
@@ -64,7 +64,7 @@ export function AIPhotoInspector({ onPhotoSelected, onAnalysisComplete, label = 
 
     const base64 = asset.base64 ?? '';
     const mimeType = asset.mimeType ?? 'image/jpeg';
-    onPhotoSelected?.(base64, mimeType);
+    onPhotoSelected?.(base64, mimeType, asset.uri);
 
     if (!base64) return;
     setAnalysing(true);

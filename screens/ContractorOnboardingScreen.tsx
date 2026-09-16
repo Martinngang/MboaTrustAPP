@@ -9,7 +9,9 @@ import { useTheme } from '../theme/ThemeProvider';
 import { FONT } from '../theme/tokens';
 import { useToast } from '../components/Toast';
 import { api, apiErrorMessage } from '../api/client';
+import { PROJECT_CATEGORIES } from '../inventoryTaxonomy';
 import type { MainStackParamList } from '../navigation/types';
+import { useTranslation } from '../i18n/useTranslation';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'ContractorOnboarding'>;
 
@@ -19,11 +21,15 @@ type Props = NativeStackScreenProps<MainStackParamList, 'ContractorOnboarding'>;
 // web's comment on this flow notes), not part of the initial signup wizard.
 // Same two real backend calls web makes: grant the role (idempotent —
 // POST /users/me/roles is safe to call again if already held) then upsert
-// the contractor profile itself.
-const TRADES = ['Civil & Masonry', 'Plumbing & Water', 'Electrical', 'Roofing', 'Carpentry', 'Painting', 'Excavation', 'Solar Installation'];
+// the contractor profile itself. Categories unified onto the same sector
+// taxonomy tender categories use (PROJECT_CATEGORIES) — this used to be a
+// separate trade-skill list that could never match a tender's category in
+// contractorMatchingService's scoring (30 of 100 points).
+const TRADES = PROJECT_CATEGORIES;
 
 export function ContractorOnboardingScreen({ navigation }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const { show: showToast } = useToast();
   const [skills, setSkills] = useState<string[]>([]);
   const [region, setRegion] = useState('');
@@ -42,7 +48,7 @@ export function ContractorOnboardingScreen({ navigation }: Props) {
       await api.put('/contractor-profiles/me', { categories: skills, regions: region ? [region] : [] });
       setDone(true);
     } catch (err) {
-      showToast({ title: 'Failed to save contractor profile', description: apiErrorMessage(err, 'Please try again'), tone: 'error' });
+      showToast({ title: t('contractorOnboarding.failedToSave'), description: apiErrorMessage(err, t('menu.pleaseTryAgain')), tone: 'error' });
     } finally {
       setSubmitting(false);
     }
@@ -50,18 +56,17 @@ export function ContractorOnboardingScreen({ navigation }: Props) {
 
   if (done) {
     return (
-      <Screen header={<Header title="Contractor Setup" back />}>
+      <Screen header={<Header title={t('contractorOnboarding.title')} back />}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16 }}>
           <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: colors.forest, alignItems: 'center', justifyContent: 'center' }}>
             <Check size={28} color="#fff" />
           </View>
-          <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 20, textAlign: 'center' }}>Contractor profile ready</Text>
+          <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 20, textAlign: 'center' }}>{t('contractorOnboarding.profileReady')}</Text>
           <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 13, textAlign: 'center', lineHeight: 20 }}>
-            Your profile is under review. Verification typically takes 24–48 hours. Once verified, you can bid on open jobs and receive
-            escrow-protected payments.
+            {t('contractorOnboarding.readyDesc')}
           </Text>
           <PillButton onPress={() => navigation.navigate('MainTabs')} fullWidth>
-            Go to dashboard
+            {t('contractorOnboarding.goToDashboard')}
           </PillButton>
         </View>
       </Screen>
@@ -69,9 +74,9 @@ export function ContractorOnboardingScreen({ navigation }: Props) {
   }
 
   return (
-    <Screen header={<Header title="Contractor Setup" back />}>
+    <Screen header={<Header title={t('contractorOnboarding.title')} back />}>
       <View style={{ padding: 20, gap: 16 }}>
-        <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 13 }}>Which trades do you work in?</Text>
+        <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 13 }}>{t('contractorOnboarding.whichTrades')}</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           {TRADES.map((t) => {
             const active = skills.includes(t);
@@ -96,7 +101,7 @@ export function ContractorOnboardingScreen({ navigation }: Props) {
           })}
         </View>
 
-        <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Region you work in</Text>
+        <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>{t('contractorOnboarding.regionYouWorkIn')}</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           {['Littoral', 'Centre', 'Ouest', 'Nord-Ouest', 'Sud-Ouest'].map((r) => (
             <Pressable
@@ -119,7 +124,7 @@ export function ContractorOnboardingScreen({ navigation }: Props) {
         </View>
 
         <PillButton onPress={finish} fullWidth disabled={submitting} loading={submitting} style={{ marginTop: 8 }}>
-          Save contractor profile
+          {t('contractorOnboarding.saveProfile')}
         </PillButton>
       </View>
     </Screen>

@@ -18,19 +18,22 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
 import { useMilestoneDisputeMutation } from '../../api/escrow';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
+import { translations, type TranslationKey } from '../../i18n/translations';
 
 type RouteProps = RouteProp<MainStackParamList, 'Dispute'>;
 
-const DISPUTE_REASONS = [
-  'Incomplete Work / Substandard Quality',
-  'Contractor Inactivity / Unreasonable Delay',
-  'Material Deviation from Agreed Specifications',
-  'Unauthorized Cost Increase or Scope Change',
-  'Suspected Fraud / False Verification Evidence',
+const DISPUTE_REASON_KEYS: TranslationKey[] = [
+  'dispute.reason1',
+  'dispute.reason2',
+  'dispute.reason3',
+  'dispute.reason4',
+  'dispute.reason5',
 ];
 
 export function DisputeScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const route = useRoute<RouteProps>();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { show: showToast } = useToast();
@@ -38,12 +41,12 @@ export function DisputeScreen() {
 
   const { projectId, milestoneId, milestoneTitle } = route.params;
 
-  const [selectedReason, setSelectedReason] = useState(DISPUTE_REASONS[0]);
+  const [selectedReasonKey, setSelectedReasonKey] = useState<TranslationKey>(DISPUTE_REASON_KEYS[0]);
   const [details, setDetails] = useState('');
 
   const handleSubmitDispute = async () => {
     if (!details.trim()) {
-      showToast({ title: 'Explanation Required', description: 'Please provide detailed context for the dispute.', tone: 'error' });
+      showToast({ title: t('dispute.explanationRequired'), description: t('dispute.explanationRequiredDesc'), tone: 'error' });
       return;
     }
 
@@ -51,44 +54,44 @@ export function DisputeScreen() {
       await disputeMutation.mutateAsync({
         projectId,
         milestoneId,
-        reason: `${selectedReason}: ${details.trim()}`,
+        reason: `${translations[selectedReasonKey].en}: ${details.trim()}`,
       });
 
       showToast({
-        title: 'Escrow Frozen & Dispute Filed',
-        description: 'An independent verifier has been assigned to investigate.',
+        title: t('dispute.escrowFrozen'),
+        description: t('dispute.verifierAssigned'),
         tone: 'warning',
       });
       navigation.goBack();
     } catch (err: any) {
       showToast({
-        title: 'Dispute Submission Failed',
-        description: err?.message || 'Could not freeze escrow. Please try again.',
+        title: t('dispute.submissionFailed'),
+        description: err?.message || t('dispute.couldNotFreeze'),
         tone: 'error',
       });
     }
   };
 
   return (
-    <Screen header={<Header title="Raise Milestone Dispute" back />}>
+    <Screen header={<Header title={t('dispute.title')} back />}>
       <View style={{ padding: 16, gap: 18 }}>
         {/* Warning Banner */}
         <Card style={{ padding: 14, backgroundColor: colors.seal + '15', borderColor: colors.seal + '40', gap: 8 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <ShieldAlert size={20} color={colors.seal} />
             <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.seal, fontSize: 14 }}>
-              Escrow Protection Protocol
+              {t('dispute.protocolTitle')}
             </Text>
           </View>
           <Text style={{ fontFamily: FONT.sans, color: colors.ink, fontSize: 12, lineHeight: 17 }}>
-            Filing a dispute freezes the milestone funds in escrow immediately. Funds cannot be released until an independent verification investigation is concluded.
+            {t('dispute.protocolDesc')}
           </Text>
         </Card>
 
         {/* Milestone Info */}
         <Card style={{ padding: 14, gap: 4 }}>
           <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase' }}>
-            Disputed Milestone
+            {t('dispute.disputedMilestone')}
           </Text>
           <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 16 }}>
             {milestoneTitle}
@@ -98,15 +101,15 @@ export function DisputeScreen() {
         {/* Dispute Reason Category */}
         <Card style={{ padding: 16, gap: 12 }}>
           <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-            Select Primary Reason
+            {t('dispute.selectPrimaryReason')}
           </Text>
 
-          {DISPUTE_REASONS.map((r) => {
-            const active = selectedReason === r;
+          {DISPUTE_REASON_KEYS.map((rk) => {
+            const active = selectedReasonKey === rk;
             return (
               <Pressable
-                key={r}
-                onPress={() => setSelectedReason(r)}
+                key={rk}
+                onPress={() => setSelectedReasonKey(rk)}
                 accessibilityRole="radio"
                 accessibilityState={{ selected: active }}
                 style={{
@@ -136,7 +139,7 @@ export function DisputeScreen() {
                   {active && <Check size={12} color="#fff" strokeWidth={3} />}
                 </View>
                 <Text style={{ fontFamily: FONT.sansMedium, color: colors.ink, fontSize: 13, flex: 1 }}>
-                  {r}
+                  {t(rk)}
                 </Text>
               </Pressable>
             );
@@ -146,10 +149,10 @@ export function DisputeScreen() {
         {/* Detailed Explanation */}
         <Card style={{ padding: 16, gap: 10 }}>
           <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-            Detailed Explanation & Observations
+            {t('dispute.detailedExplanation')}
           </Text>
           <TextInput
-            placeholder="Describe what occurred, dates of communication with contractor, and specific missing deliverables..."
+            placeholder={t('dispute.detailsPlaceholder')}
             placeholderTextColor={colors.inkSubtle}
             value={details}
             onChangeText={setDetails}
@@ -176,7 +179,7 @@ export function DisputeScreen() {
           disabled={disputeMutation.isPending}
           fullWidth
         >
-          Freeze Escrow & Submit Dispute
+          {t('dispute.freezeAndSubmit')}
         </PillButton>
       </View>
     </Screen>

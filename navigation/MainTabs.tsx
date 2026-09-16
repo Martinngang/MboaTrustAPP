@@ -36,41 +36,57 @@ interface TabItemConfig {
   icon: LucideIcon;
 }
 
+// Every role's 4th tab renders the same shared ActivityScreen (a generic,
+// unfiltered "Milestones/Funding/Marketplace" feed — see ActivityScreen.tsx,
+// which always titles itself "Activity" regardless of role). Only 'funder'
+// labeled that tab accurately; contractor/quincaillerie/seller/verifier gave
+// it a role-specific-sounding label ('Earnings'/'Orders'/'Listings'/'Audits')
+// that promised a dedicated destination it never opened — tapping "Listings"
+// as a seller, for one real example, landed on the generic activity feed,
+// not land-listing management. Each of those REAL destinations already
+// exists and is reachable elsewhere (EarningsWithdrawScreen via JobsScreen's
+// own link and the quick-action menu; MaterialOrdersScreen and
+// MyLandListingsScreen the same way — see LandBrowseScreen's own "My
+// listings" button and QuickActionModal), so nothing here was actually
+// missing — just mislabeled on this one always-visible tab. Relabeling to
+// match what the tab actually opens, rather than building a second,
+// tab-rooted variant of screens that already work correctly as pushed
+// stack screens (with their own back-navigation and header assumptions).
 const ROLE_TABS: Record<NonNullable<Role>, TabItemConfig[]> = {
   funder: [
     { name: 'Home', component: HomeScreen, label: 'Home', icon: Home },
     { name: 'Projects', component: ProjectsScreen, label: 'Projects', icon: FolderKanban },
     { name: 'Messages', component: MessagesScreen, label: 'Messages', icon: MessageSquare },
     { name: 'Activity', component: ActivityScreen, label: 'Activity', icon: Activity },
-    { name: 'Profile', component: ProfileScreen, label: 'Profile', icon: User },
+    { name: 'Profile', component: ProfileScreen, label: 'Menu', icon: User },
   ],
   contractor: [
     { name: 'Home', component: HomeScreen, label: 'Home', icon: Home },
     { name: 'Jobs', component: JobsScreen, label: 'Jobs', icon: Briefcase },
     { name: 'Messages', component: MessagesScreen, label: 'Messages', icon: MessageSquare },
-    { name: 'Activity', component: ActivityScreen, label: 'Earnings', icon: Activity },
-    { name: 'Profile', component: ProfileScreen, label: 'Profile', icon: User },
+    { name: 'Activity', component: ActivityScreen, label: 'Activity', icon: Activity },
+    { name: 'Profile', component: ProfileScreen, label: 'Menu', icon: User },
   ],
   quincaillerie: [
     { name: 'Home', component: HomeScreen, label: 'Home', icon: Home },
     { name: 'Materials', component: MaterialsScreen, label: 'Materials', icon: Store },
     { name: 'Messages', component: MessagesScreen, label: 'Messages', icon: MessageSquare },
-    { name: 'Activity', component: ActivityScreen, label: 'Orders', icon: Activity },
-    { name: 'Profile', component: ProfileScreen, label: 'Profile', icon: User },
+    { name: 'Activity', component: ActivityScreen, label: 'Activity', icon: Activity },
+    { name: 'Profile', component: ProfileScreen, label: 'Menu', icon: User },
   ],
   seller: [
     { name: 'Home', component: HomeScreen, label: 'Home', icon: Home },
     { name: 'LandBrowse', component: LandBrowseScreen, label: 'Land', icon: MapPin },
     { name: 'Messages', component: MessagesScreen, label: 'Messages', icon: MessageSquare },
-    { name: 'Activity', component: ActivityScreen, label: 'Listings', icon: Activity },
-    { name: 'Profile', component: ProfileScreen, label: 'Profile', icon: User },
+    { name: 'Activity', component: ActivityScreen, label: 'Activity', icon: Activity },
+    { name: 'Profile', component: ProfileScreen, label: 'Menu', icon: User },
   ],
   verifier: [
     { name: 'Home', component: HomeScreen, label: 'Home', icon: Home },
     { name: 'VerifierTasks', component: VerifierTasksScreen, label: 'Tasks', icon: ShieldCheck },
     { name: 'Messages', component: MessagesScreen, label: 'Messages', icon: MessageSquare },
-    { name: 'Activity', component: ActivityScreen, label: 'Audits', icon: Activity },
-    { name: 'Profile', component: ProfileScreen, label: 'Profile', icon: User },
+    { name: 'Activity', component: ActivityScreen, label: 'Activity', icon: Activity },
+    { name: 'Profile', component: ProfileScreen, label: 'Menu', icon: User },
   ],
 };
 

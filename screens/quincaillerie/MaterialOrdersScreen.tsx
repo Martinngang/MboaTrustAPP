@@ -19,28 +19,37 @@ import { EmptyState } from '../../components/EmptyState';
 import { fmt } from '../../components/fmt';
 import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
-import { useMaterialOrdersQuery, type MaterialOrder } from '../../api/materials';
+import { useMaterialOrdersForMySupplierQuery } from '../../api/materialOrders';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
+import type { TranslationKey } from '../../i18n/translations';
 
-const FILTER_TABS = ['All', 'Requested', 'Dispatched', 'Delivered'] as const;
+const FILTER_TABS = ['All', 'Requested', 'Out for delivery', 'Delivered'] as const;
+const FILTER_TAB_KEY: Record<(typeof FILTER_TABS)[number], TranslationKey> = {
+  All: 'materialOrders.tabAll',
+  Requested: 'materialOrders.tabRequested',
+  'Out for delivery': 'materialOrders.tabOutForDelivery',
+  Delivered: 'materialOrders.tabDelivered',
+};
 
 export function MaterialOrdersScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const [activeTab, setActiveTab] = useState<(typeof FILTER_TABS)[number]>('All');
 
-  const { data: orders, isLoading } = useMaterialOrdersQuery();
+  const { data: orders, isLoading } = useMaterialOrdersForMySupplierQuery('all');
 
   const filteredOrders = (orders || []).filter((o) => {
     if (activeTab === 'All') return true;
     if (activeTab === 'Requested') return o.status === 'requested' || o.status === 'confirmed';
-    if (activeTab === 'Dispatched') return o.status === 'dispatched';
+    if (activeTab === 'Out for delivery') return o.status === 'out_for_delivery';
     if (activeTab === 'Delivered') return o.status === 'delivered';
     return true;
   });
 
   return (
-    <Screen header={<Header title="Supply Orders" subtitle={`${filteredOrders.length} orders`} back />}>
+    <Screen header={<Header title={t('materialOrders.title')} subtitle={`${filteredOrders.length} ${t('materialOrders.orders')}`} back />}>
       <View style={{ padding: 16, gap: 16 }}>
         {/* Filter Tabs */}
         <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -69,7 +78,7 @@ export function MaterialOrdersScreen() {
                     color: active ? colors.amber : colors.inkMuted,
                   }}
                 >
-                  {tab}
+                  {t(FILTER_TAB_KEY[tab])}
                 </Text>
               </Pressable>
             );
@@ -84,8 +93,8 @@ export function MaterialOrdersScreen() {
         ) : filteredOrders.length === 0 ? (
           <EmptyState
             icon={Truck}
-            title="No orders found"
-            description="Material orders requested by construction site contractors will appear here."
+            title={t('materialOrders.noOrdersFound')}
+            description={t('materialOrders.noOrdersDesc')}
           />
         ) : (
           filteredOrders.map((order) => (
@@ -98,13 +107,13 @@ export function MaterialOrdersScreen() {
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontFamily: FONT.mono, color: colors.amber, fontSize: 10, fontWeight: '700' }}>
-                      {order.orderNumber}
+                      {order.requestedByName}
                     </Text>
                     <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 16, marginTop: 2 }}>
                       {order.projectTitle}
                     </Text>
                     <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12, marginTop: 1 }}>
-                      Milestone: {order.milestoneTitle}
+                      {t('materialOrders.milestone')} {order.milestoneTitle}
                     </Text>
                   </View>
                   <StatusBadge status={order.status} />
@@ -112,13 +121,13 @@ export function MaterialOrdersScreen() {
 
                 {/* Items preview */}
                 <View style={{ backgroundColor: colors.parchment, borderRadius: 10, padding: 10, gap: 4 }}>
-                  {order.items.map((it) => (
-                    <View key={it.id} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  {order.items.map((it, i) => (
+                    <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                       <Text style={{ fontFamily: FONT.sans, color: colors.ink, fontSize: 12 }}>
                         {it.quantity}x {it.name}
                       </Text>
                       <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 11 }}>
-                        {fmt(it.totalPrice)}
+                        {fmt(it.subtotal)}
                       </Text>
                     </View>
                   ))}
@@ -145,7 +154,7 @@ export function MaterialOrdersScreen() {
                 >
                   <View>
                     <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase' }}>
-                      Escrow Guaranteed Total
+                      {t('materialOrders.escrowGuaranteedTotal')}
                     </Text>
                     <Text style={{ fontFamily: FONT.serifBold, color: colors.forest, fontSize: 16, marginTop: 1 }}>
                       {fmt(order.totalAmount)}
@@ -154,7 +163,7 @@ export function MaterialOrdersScreen() {
 
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.amber, fontSize: 12 }}>
-                      View Details
+                      {t('materialOrders.viewDetails')}
                     </Text>
                     <ArrowRight size={14} color={colors.amber} />
                   </View>

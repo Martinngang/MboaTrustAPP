@@ -1,116 +1,118 @@
-import { useState } from 'react';
 import { View, Text, Switch, Pressable } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import {
-  Bell,
-  MessageSquare,
-  Smartphone,
-  ShieldCheck,
-  Wallet,
-} from 'lucide-react-native';
 import { Screen } from '../components/Screen';
 import { Header } from '../components/Header';
 import { Card } from '../components/Card';
-import { PillButton } from '../components/PillButton';
 import { useToast } from '../components/Toast';
 import { useTheme } from '../theme/ThemeProvider';
 import { FONT } from '../theme/tokens';
+import {
+  useNotificationPreferencesQuery,
+  useUpdateNotificationPreferencesMutation,
+  type NotificationChannelPrefs,
+} from '../api/notificationPreferences';
+import { apiErrorMessage } from '../api/client';
+import { useTranslation } from '../i18n/useTranslation';
+import type { TranslationKey } from '../i18n/translations';
 
+interface PrefRow {
+  key: string;
+  labelKey: TranslationKey;
+  subKey: TranslationKey;
+  defaults: NotificationChannelPrefs;
+}
+
+// Same six categories the backend defines (utils/notificationCategories.js)
+// — kept in sync deliberately so every category here is real and settable.
+const ROWS: PrefRow[] = [
+  { key: 'milestones', labelKey: 'notifPrefs.milestonesLabel', subKey: 'notifPrefs.milestonesSub', defaults: { push: true, email: true } },
+  { key: 'bids', labelKey: 'notifPrefs.bidsLabel', subKey: 'notifPrefs.bidsSub', defaults: { push: true, email: false } },
+  { key: 'disputes', labelKey: 'notifPrefs.disputesLabel', subKey: 'notifPrefs.disputesSub', defaults: { push: true, email: true } },
+  { key: 'messages', labelKey: 'notifPrefs.messagesLabel', subKey: 'notifPrefs.messagesSub', defaults: { push: true, email: false } },
+  { key: 'land', labelKey: 'notifPrefs.landLabel', subKey: 'notifPrefs.landSub', defaults: { push: true, email: false } },
+  { key: 'marketing', labelKey: 'notifPrefs.marketingLabel', subKey: 'notifPrefs.marketingSub', defaults: { push: false, email: false } },
+];
+
+/** Granular per-type, per-channel notification control, backed by the real
+ * NotificationPreference document — replaces the previous local-state-only
+ * screen, whose 4 switches (SMS/WhatsApp alerts) didn't correspond to any
+ * real backend category and whose "Save" never persisted anything. */
 export function NotificationPreferencesScreen() {
   const { colors } = useTheme();
-  const navigation = useNavigation();
+  const { t } = useTranslation();
   const { show: showToast } = useToast();
+  const { data: prefs } = useNotificationPreferencesQuery();
+  const updatePrefs = useUpdateNotificationPreferencesMutation();
 
-  const [escrowAlerts, setEscrowAlerts] = useState(true);
-  const [chatAlerts, setChatAlerts] = useState(true);
-  const [smsAlerts, setSmsAlerts] = useState(true);
-  const [whatsappAlerts, setWhatsappAlerts] = useState(false);
+  const toggle = async (key: string, channel: 'push' | 'email') => {
+    const current = prefs?.[key] ?? ROWS.find((r) => r.key === key)!.defaults;
+    try {
+      await updatePrefs.mutateAsync({ [key]: { ...current, [channel]: !current[channel] } });
+    } catch (err) {
+      showToast({ title: t('notifPrefs.failedToUpdate'), description: apiErrorMessage(err, t('menu.pleaseTryAgain')), tone: 'error' });
+    }
+  };
 
-  const handleSave = () => {
-    showToast({
-      title: 'Preferences Saved',
-      description: 'Your notification channels have been updated.',
-      tone: 'success',
-    });
-    navigation.goBack();
+  const disableAllEmail = async () => {
+    const patch = Object.fromEntries(ROWS.map((r) => [r.key, { ...(prefs?.[r.key] ?? r.defaults), email: false }]));
+    try {
+      await updatePrefs.mutateAsync(patch);
+      showToast({ title: t('notifPrefs.emailDisabled'), tone: 'success' });
+    } catch (err) {
+      showToast({ title: t('notifPrefs.failedToUpdatePlural'), description: apiErrorMessage(err, t('menu.pleaseTryAgain')), tone: 'error' });
+    }
   };
 
   return (
-    <Screen header={<Header title="Notification Alerts" subtitle="SMS, WhatsApp & Push" back />}>
-      <View style={{ padding: 16, gap: 18 }}>
-        <Card style={{ padding: 16, gap: 14 }}>
-          {/* Item 1 */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-                Escrow & Payment Alerts
-              </Text>
-              <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
-                Instant notifications when milestones are funded or released
-              </Text>
-            </View>
-            <Switch
-              value={escrowAlerts}
-              onValueChange={setEscrowAlerts}
-              trackColor={{ false: colors.parchmentDark, true: colors.forest }}
-            />
-          </View>
+    <Screen header={<Header title={t('notifPrefs.title')} subtitle={t('notifPrefs.subtitle')} back />}>
+      <View style={{ padding: 16, gap: 14 }}>
+        <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12, lineHeight: 17 }}>
+          {t('notifPrefs.intro')}
+        </Text>
 
-          {/* Item 2 */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.parchmentDark }}>
-            <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-                Chat & Direct Messages
-              </Text>
-              <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
-                Notifications for replies and contractor updates
-              </Text>
-            </View>
-            <Switch
-              value={chatAlerts}
-              onValueChange={setChatAlerts}
-              trackColor={{ false: colors.parchmentDark, true: colors.forest }}
-            />
+        <Card style={{ padding: 0, overflow: 'hidden' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.parchmentDark }}>
+            <View style={{ flex: 1 }} />
+            <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 9, textTransform: 'uppercase', letterSpacing: 1, width: 50, textAlign: 'center' }}>
+              {t('notifPrefs.push')}
+            </Text>
+            <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 9, textTransform: 'uppercase', letterSpacing: 1, width: 55, textAlign: 'center' }}>
+              {t('notifPrefs.email')}
+            </Text>
           </View>
-
-          {/* Item 3 */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.parchmentDark }}>
-            <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-                SMS Backup Alerts
-              </Text>
-              <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
-                Receive essential security & escrow codes via SMS
-              </Text>
-            </View>
-            <Switch
-              value={smsAlerts}
-              onValueChange={setSmsAlerts}
-              trackColor={{ false: colors.parchmentDark, true: colors.forest }}
-            />
-          </View>
-
-          {/* Item 4 */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.parchmentDark }}>
-            <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-                WhatsApp Delivery Reports
-              </Text>
-              <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
-                Receive material waybills and inspection summaries on WhatsApp
-              </Text>
-            </View>
-            <Switch
-              value={whatsappAlerts}
-              onValueChange={setWhatsappAlerts}
-              trackColor={{ false: colors.parchmentDark, true: colors.forest }}
-            />
-          </View>
+          {ROWS.map((r, i) => {
+            const p = prefs?.[r.key] ?? r.defaults;
+            return (
+              <View
+                key={r.key}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  borderBottomWidth: i < ROWS.length - 1 ? 1 : 0,
+                  borderBottomColor: colors.parchmentDark,
+                }}
+              >
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>{t(r.labelKey)}</Text>
+                  <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 11, marginTop: 1 }}>{t(r.subKey)}</Text>
+                </View>
+                <View style={{ width: 50, alignItems: 'center' }}>
+                  <Switch value={p.push} onValueChange={() => toggle(r.key, 'push')} trackColor={{ false: colors.parchmentDark, true: colors.forest }} />
+                </View>
+                <View style={{ width: 55, alignItems: 'center' }}>
+                  <Switch value={p.email} onValueChange={() => toggle(r.key, 'email')} trackColor={{ false: colors.parchmentDark, true: colors.forest }} />
+                </View>
+              </View>
+            );
+          })}
         </Card>
 
-        <PillButton variant="primary" onPress={handleSave} fullWidth>
-          Save Notification Settings
-        </PillButton>
+        <Pressable onPress={disableAllEmail} style={{ alignSelf: 'flex-start' }}>
+          <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.inkMuted, fontSize: 12 }}>
+            {t('notifPrefs.turnOffAllEmail')}
+          </Text>
+        </Pressable>
       </View>
     </Screen>
   );

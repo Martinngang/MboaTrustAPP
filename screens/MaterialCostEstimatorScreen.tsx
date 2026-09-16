@@ -21,19 +21,22 @@ import { useToast } from '../components/Toast';
 import { fmt } from '../components/fmt';
 import { useTheme } from '../theme/ThemeProvider';
 import { FONT } from '../theme/tokens';
-import { formatDualPrice } from '../utils/currency';
+import { useCurrencyConversionQuery } from '../api/tools';
 import { calculateCameroonConstructionMaterials, type ConstructionEstimateResult } from '../utils/constructionEstimator';
 import type { MainStackParamList } from '../navigation/types';
+import { useTranslation } from '../i18n/useTranslation';
+import type { TranslationKey } from '../i18n/translations';
 
 const PRESET_SURFACES = [80, 120, 160, 250];
-const FLOOR_OPTIONS = [
-  { value: 1, label: 'Ground Floor (Plain-Pied)' },
-  { value: 2, label: 'R+1 (2 Floors)' },
-  { value: 3, label: 'R+2 (3 Floors)' },
+const FLOOR_OPTIONS: { value: number; labelKey: TranslationKey }[] = [
+  { value: 1, labelKey: 'estimator.groundFloor' },
+  { value: 2, labelKey: 'estimator.floor1' },
+  { value: 3, labelKey: 'estimator.floor2' },
 ];
 
 export function MaterialCostEstimatorScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { show: showToast } = useToast();
 
@@ -48,35 +51,43 @@ export function MaterialCostEstimatorScreen() {
     quality
   );
 
+  // Real backend exchange rate (GET /tools/convert), not a hardcoded client
+  // rate that silently drifts from what the platform actually uses. Reads
+  // convertedAmount (the pre-fee figure) — this is an informational "about
+  // how much that is" hint, not a real money movement, so the currency
+  // conversion fee doesn't apply here.
+  const { data: eurConversion } = useCurrencyConversionQuery(estimate.totalMaterialCostXaf, 'XAF', 'EUR');
+
   const handleOrderSupply = () => {
     showToast({
-      title: 'Estimate Exported',
-      description: 'Calculated bill of materials ready for Quincaillerie supply order.',
+      title: t('estimator.estimateExported'),
+      description: t('estimator.estimateExportedDesc'),
       tone: 'success',
     });
     navigation.navigate('MaterialOrders');
   };
 
   return (
-    <Screen header={<Header title="Construction Cost Estimator" subtitle="Civil Engineering Standards (Cameroon)" back />}>
+    <Screen header={<Header title={t('estimator.title')} subtitle={t('estimator.subtitle')} back />}>
       <View style={{ padding: 16, gap: 18 }}>
         {/* Estimator Input Configuration */}
         <Card style={{ padding: 16, gap: 14 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Calculator size={18} color={colors.forest} />
             <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 16 }}>
-              Project Dimensions & Layout
+              {t('estimator.dimensionsLayout')}
             </Text>
           </View>
 
           {/* Surface Area Input */}
           <View style={{ gap: 6 }}>
             <TextField
-              label="Ground Surface Area (m²)"
+              label={t('estimator.surfaceAreaLabel')}
               placeholder="120"
               value={surfaceInput}
               onChangeText={setSurfaceInput}
               keyboardType="numeric"
+              returnKeyType="done"
             />
             {/* Surface Preset Chips */}
             <View style={{ flexDirection: 'row', gap: 6, marginTop: 2 }}>
@@ -108,7 +119,7 @@ export function MaterialCostEstimatorScreen() {
           {/* Number of Floors */}
           <View style={{ gap: 6 }}>
             <Text style={{ fontFamily: FONT.sansMedium, color: colors.ink, fontSize: 13 }}>
-              Building Elevation
+              {t('estimator.buildingElevation')}
             </Text>
             <View style={{ gap: 6 }}>
               {FLOOR_OPTIONS.map((f) => {
@@ -129,7 +140,7 @@ export function MaterialCostEstimatorScreen() {
                     }}
                   >
                     <Text style={{ fontFamily: FONT.sansMedium, fontSize: 12, color: colors.ink }}>
-                      {f.label}
+                      {t(f.labelKey)}
                     </Text>
                     {active && <CheckCircle2 size={16} color={colors.forest} />}
                   </Pressable>
@@ -157,7 +168,7 @@ export function MaterialCostEstimatorScreen() {
                   }}
                 >
                   <Text style={{ fontFamily: FONT.sansSemiBold, fontSize: 12, color: active ? colors.forest : colors.inkMuted, textTransform: 'capitalize' }}>
-                    {q} Grade Structural
+                    {q === 'standard' ? t('estimator.standard') : t('estimator.premium')} {t('estimator.gradeStructural')}
                   </Text>
                 </Pressable>
               );
@@ -168,23 +179,25 @@ export function MaterialCostEstimatorScreen() {
         {/* Live Material Results Hero Card */}
         <Card style={{ padding: 18, backgroundColor: colors.forestDark, gap: 10 }}>
           <Text style={{ fontFamily: FONT.mono, color: 'rgba(255,255,255,0.7)', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.5 }}>
-            Total Estimated Materials Budget
+            {t('estimator.totalBudget')}
           </Text>
 
           <Text style={{ fontFamily: FONT.serifBold, color: '#fff', fontSize: 24 }}>
             {fmt(estimate.totalMaterialCostXaf)}
           </Text>
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, alignSelf: 'flex-start' }}>
-            <Sparkles size={13} color="#FFD700" />
-            <Text style={{ fontFamily: FONT.mono, color: '#fff', fontSize: 12 }}>
-              {formatDualPrice(estimate.totalMaterialCostXaf, 'EUR')}
-            </Text>
-          </View>
+          {eurConversion ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, alignSelf: 'flex-start' }}>
+              <Sparkles size={13} color="#FFD700" />
+              <Text style={{ fontFamily: FONT.mono, color: '#fff', fontSize: 12 }}>
+                {`≈ €${eurConversion.convertedAmount.toLocaleString('fr-FR', { maximumFractionDigits: 0 })}`}
+              </Text>
+            </View>
+          ) : null}
 
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.15)', paddingTop: 10, marginTop: 4 }}>
             <Text style={{ fontFamily: FONT.sans, color: 'rgba(255,255,255,0.8)', fontSize: 12 }}>
-              Total Built Floor Area: {estimate.totalBuiltAreaSqm} m²
+              {t('estimator.totalBuiltArea')} {estimate.totalBuiltAreaSqm} m²
             </Text>
             <Text style={{ fontFamily: FONT.sans, color: 'rgba(255,255,255,0.8)', fontSize: 12 }}>
               ~{fmt(estimate.costPerSqm)} / m²
@@ -195,7 +208,7 @@ export function MaterialCostEstimatorScreen() {
         {/* Itemized Bill of Quantities */}
         <View style={{ gap: 10 }}>
           <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 15 }}>
-            Itemized Bill of Materials (BOM)
+            {t('estimator.itemizedBom')}
           </Text>
 
           {estimate.items.map((item) => (
@@ -216,7 +229,7 @@ export function MaterialCostEstimatorScreen() {
 
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 6, borderTopWidth: 1, borderTopColor: colors.parchmentDark }}>
                 <Text style={{ fontFamily: FONT.mono, color: colors.inkMuted, fontSize: 11 }}>
-                  Quantity: {item.quantity} {item.unit}
+                  {t('estimator.quantity')} {item.quantity} {item.unit}
                 </Text>
                 <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 11 }}>
                   @{fmt(item.unitPrice)} / {item.unit}
@@ -228,7 +241,7 @@ export function MaterialCostEstimatorScreen() {
 
         {/* Order Supply Button */}
         <PillButton variant="primary" onPress={handleOrderSupply} fullWidth>
-          Generate Quincaillerie Supply Order
+          {t('estimator.generateSupplyOrder')}
         </PillButton>
       </View>
     </Screen>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, Pressable, TextInput, Image, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, Pressable, TextInput, Image, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Search, X, MapPin, Plus, FolderKanban, ShieldCheck, ArrowRight } from 'lucide-react-native';
@@ -13,11 +13,13 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
 import { useProjectsQuery, type Project } from '../../api/projects';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
 
 const CATEGORIES = ['All', 'Water & Sanitation', 'Education', 'Healthcare', 'Infrastructure', 'Agriculture'];
 
 export function BrowseProjectsScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -33,13 +35,15 @@ export function BrowseProjectsScreen() {
 
   return (
     <Screen
+      refreshing={isRefetching}
+      onRefresh={refetch}
       header={
         <Header
-          title="Discover Projects"
+          title={t('browseProjects.title')}
           back
           action={
             <Pressable
-              onPress={() => navigation.navigate('CreateProject')}
+              onPress={() => navigation.navigate('PostJob')}
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -52,7 +56,7 @@ export function BrowseProjectsScreen() {
             >
               <Plus size={14} color="#fff" strokeWidth={2.5} />
               <Text style={{ fontFamily: FONT.sansSemiBold, color: '#fff', fontSize: 12 }}>
-                New Project
+                {t('browseProjects.newProject')}
               </Text>
             </Pressable>
           }
@@ -78,7 +82,7 @@ export function BrowseProjectsScreen() {
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholder="Search projects by name, location, or trade..."
+            placeholder={t('browseProjects.searchPlaceholder')}
             placeholderTextColor={colors.inkSubtle}
             style={{
               flex: 1,
@@ -136,11 +140,11 @@ export function BrowseProjectsScreen() {
         ) : filteredProjects.length === 0 ? (
           <EmptyState
             icon={FolderKanban}
-            title="No projects found"
+            title={t('browseProjects.noProjectsFound')}
             description={
               projects && projects.length > 0
-                ? 'Try adjusting your search query or category filter.'
-                : 'Be the first to launch a diaspora-funded project with protected escrow.'
+                ? t('browseProjects.adjustFilters')
+                : t('browseProjects.beTheFirst')
             }
           />
         ) : (
@@ -197,7 +201,7 @@ export function BrowseProjectsScreen() {
                     <View style={{ gap: 4 }}>
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                         <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 11 }}>
-                          {fmt(project.raised)} raised
+                          {fmt(project.raised)} {t('browseProjects.raised')}
                         </Text>
                         <Text style={{ fontFamily: FONT.mono, color: colors.forest, fontSize: 11, fontWeight: '700' }}>
                           {progress}%
@@ -229,12 +233,12 @@ export function BrowseProjectsScreen() {
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                         <ShieldCheck size={14} color={colors.forest} />
                         <Text style={{ fontFamily: FONT.sansMedium, color: colors.forest, fontSize: 12 }}>
-                          {project.milestones.length} Milestones Escrowed
+                          {project.milestones.length} {t('browseProjects.milestonesEscrowed')}
                         </Text>
                       </View>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                         <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forest, fontSize: 12 }}>
-                          Details
+                          {t('browseProjects.details')}
                         </Text>
                         <ArrowRight size={14} color={colors.forest} />
                       </View>

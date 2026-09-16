@@ -9,11 +9,14 @@ import { NavigationContainer } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { ThemeProvider, useTheme } from './theme/ThemeProvider';
 import { useAppFonts } from './theme/useAppFonts';
-import { AppProvider } from './context/AppContext';
+import { AppProvider, useApp } from './context/AppContext';
+import { OfflineQueueProvider } from './context/OfflineQueueContext';
+import { FeeConfigProvider } from './context/FeeConfigContext';
 import { RootNavigator } from './navigation/RootNavigator';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider } from './components/Toast';
 import { GlobalLoadingBar } from './components/GlobalLoadingBar';
+import { StripeRootWrapper } from './components/StripeRootWrapper';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -25,6 +28,7 @@ const queryClient = new QueryClient();
 // behind it while animating.
 function NavigationRoot() {
   const { colors, mode } = useTheme();
+  const { destination } = useApp();
   const navTheme = {
     dark: mode === 'dark',
     colors: {
@@ -44,7 +48,20 @@ function NavigationRoot() {
   };
 
   return (
-    <NavigationContainer theme={navTheme}>
+    // RootNavigator conditionally mounts an entirely different top-level
+    // Stack (AuthStack/OnboardingStack/MainStack/AdminGateScreen) based on
+    // `destination`, but NavigationContainer itself never unmounts across
+    // that swap — it's declared once here. Without a key tied to
+    // `destination`, NavigationContainer's own internal navigation-state
+    // tree survives the swap and gets handed to whichever new Stack just
+    // mounted; since a few route names deliberately exist in more than one
+    // stack (QuincaillerieRegister, VerifierRegister), the new Stack was
+    // rehydrating that leftover state and landing directly on the old
+    // route instead of its own initialRouteName — e.g. finishing
+    // Quincaillerie/Verifier registration during onboarding landed back on
+    // the registration form instead of Home. Keying on `destination` forces
+    // a fully fresh navigation-state tree on every real transition.
+    <NavigationContainer key={destination} theme={navTheme}>
       <RootNavigator />
       <GlobalLoadingBar />
       <StatusBar style={mode === 'dark' ? 'light' : 'dark'} />
@@ -65,6 +82,16 @@ export default function App() {
 
   if (!fontsReady) return null;
 
+  const app = (
+    <AppProvider>
+      <FeeConfigProvider>
+        <OfflineQueueProvider>
+          <NavigationRoot />
+        </OfflineQueueProvider>
+      </FeeConfigProvider>
+    </AppProvider>
+  );
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayoutRootView}>
       <SafeAreaProvider>
@@ -72,9 +99,7 @@ export default function App() {
           <ErrorBoundary>
             <QueryClientProvider client={queryClient}>
               <ToastProvider>
-                <AppProvider>
-                  <NavigationRoot />
-                </AppProvider>
+                <StripeRootWrapper>{app}</StripeRootWrapper>
               </ToastProvider>
             </QueryClientProvider>
           </ErrorBoundary>

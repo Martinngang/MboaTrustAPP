@@ -1,60 +1,58 @@
-import { useState } from 'react';
-import { View, Text, Pressable, Image, ActivityIndicator, Modal, TextInput, ScrollView } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import {
-  Truck,
-  MapPin,
-  Phone,
-  CheckCircle2,
-  Camera,
-  FileText,
-  ShieldCheck,
-  X,
-  Plus,
-} from 'lucide-react-native';
+import { View, Text, ActivityIndicator } from 'react-native';
+import { Truck, MapPin, CheckCircle2, ShieldCheck, XCircle } from 'lucide-react-native';
 import { Screen } from '../../components/Screen';
 import { Header } from '../../components/Header';
 import { Card } from '../../components/Card';
 import { StatusBadge } from '../../components/StatusBadge';
 import { PillButton } from '../../components/PillButton';
+import { EmptyState } from '../../components/EmptyState';
 import { useToast } from '../../components/Toast';
 import { fmt } from '../../components/fmt';
 import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
 import {
-  useMaterialOrdersQuery,
+  useMaterialOrdersForMySupplierQuery,
   useConfirmMaterialOrderMutation,
-  useDispatchMaterialOrderMutation,
-  type MaterialOrder,
-} from '../../api/materials';
+  useRejectMaterialOrderMutation,
+  useMarkOrderOutForDeliveryMutation,
+} from '../../api/materialOrders';
+import { apiErrorMessage } from '../../api/client';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
 
 type RouteProps = RouteProp<MainStackParamList, 'MaterialOrderDetail'>;
 
+// Ported from the real backend lifecycle in materialOrderController.js —
+// requested -> confirmed -> out_for_delivery -> delivered, plus
+// requested -> rejected and requested -> cancelled. The previous version of
+// this screen had a "QR pickup voucher" and "waybill photo upload" flow with
+// no backend endpoint behind either of them (fabricated — no QR/blockchain
+// concept exists anywhere in this backend); both are gone. "Confirm
+// delivery" (the last step) belongs to whoever received the materials on
+// site (the project owner or awarded contractor, via geotag), not the
+// supplier, so it isn't an action offered from this — the supplier's own —
+// screen.
 export function MaterialOrderDetailScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const route = useRoute<RouteProps>();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { show: showToast } = useToast();
 
   const { orderId } = route.params;
-  const { data: orders, isLoading } = useMaterialOrdersQuery();
+  const { data: orders, isLoading } = useMaterialOrdersForMySupplierQuery('all');
   const confirmMutation = useConfirmMaterialOrderMutation();
-  const dispatchMutation = useDispatchMaterialOrderMutation();
+  const rejectMutation = useRejectMaterialOrderMutation();
+  const outForDeliveryMutation = useMarkOrderOutForDeliveryMutation();
 
-  const order = (orders || []).find((o) => o.id === orderId) || (orders || [])[0];
+  const order = (orders || []).find((o) => o.id === orderId);
 
-  const [dispatchModalOpen, setDispatchModalOpen] = useState(false);
-  const [waybillNotes, setWaybillNotes] = useState('Dispatched via Isuzu 10-tonne truck with driver delivery slip #WB-881.');
-  const [waybillPhoto, setWaybillPhoto] = useState(
-    'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?w=600&h=400&fit=crop'
-  );
-
-  if (isLoading || !order) {
+  if (isLoading) {
     return (
-      <Screen header={<Header title="Order Details" back />}>
+      <Screen header={<Header title={t('materialOrderDetail.title')} back />}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60 }}>
           <ActivityIndicator color={colors.amber} />
         </View>
@@ -62,248 +60,171 @@ export function MaterialOrderDetailScreen() {
     );
   }
 
+  if (!order) {
+    return (
+      <Screen header={<Header title={t('materialOrderDetail.title')} back />}>
+        <View style={{ padding: 24 }}>
+          <EmptyState icon={Truck} title={t('materialOrderDetail.orderNotFound')} description={t('materialOrderDetail.orderNotFoundDesc')} />
+        </View>
+      </Screen>
+    );
+  }
+
   const isRequested = order.status === 'requested';
   const isConfirmed = order.status === 'confirmed';
-  const isDispatched = order.status === 'dispatched';
+  const isOutForDelivery = order.status === 'out_for_delivery';
   const isDelivered = order.status === 'delivered';
+  const isRejected = order.status === 'rejected';
+  const isCancelled = order.status === 'cancelled';
+  const anyActionPending = confirmMutation.isPending || rejectMutation.isPending || outForDeliveryMutation.isPending;
 
   const handleConfirm = async () => {
     try {
-      await confirmMutation.mutateAsync(order.id);
-      showToast({ title: 'Order Confirmed!', description: 'Please prepare the materials for site delivery.', tone: 'success' });
-    } catch (err: any) {
-      showToast({ title: 'Error', description: err?.message || 'Could not confirm order.', tone: 'error' });
+      await confirmMutation.mutateAsync({ orderId: order.id });
+      showToast({ title: t('materialOrderDetail.orderConfirmed'), description: t('materialOrderDetail.prepareForPickup'), tone: 'success' });
+    } catch (err) {
+      showToast({ title: t('materialOrderDetail.failedToConfirm'), description: apiErrorMessage(err), tone: 'error' });
     }
   };
 
-  const handleDispatch = async () => {
+  const handleReject = async () => {
     try {
-      await dispatchMutation.mutateAsync({
-        orderId: order.id,
-        waybillUrl: waybillPhoto,
-        notes: waybillNotes.trim(),
-      });
-      setDispatchModalOpen(false);
-      showToast({ title: 'Delivery Dispatched!', description: 'Waybill registered and buyer notified.', tone: 'success' });
-    } catch (err: any) {
-      showToast({ title: 'Error', description: err?.message || 'Could not record dispatch.', tone: 'error' });
+      await rejectMutation.mutateAsync({ orderId: order.id, reason: 'Item(s) currently out of stock' });
+      showToast({ title: t('materialOrderDetail.orderRejected'), tone: 'info' });
+    } catch (err) {
+      showToast({ title: t('materialOrderDetail.failedToReject'), description: apiErrorMessage(err), tone: 'error' });
+    }
+  };
+
+  const handleMarkOutForDelivery = async () => {
+    try {
+      await outForDeliveryMutation.mutateAsync(order.id);
+      showToast({ title: t('materialOrderDetail.markedOutForDelivery'), description: t('materialOrderDetail.requesterWillConfirm'), tone: 'success' });
+    } catch (err) {
+      showToast({ title: t('materialOrderDetail.failedToUpdate'), description: apiErrorMessage(err), tone: 'error' });
     }
   };
 
   return (
-    <Screen header={<Header title={order.orderNumber} subtitle={order.projectTitle} back />}>
+    <Screen header={<Header title={order.projectTitle} subtitle={order.milestoneTitle} back />}>
       <View style={{ padding: 16, gap: 18 }}>
-        {/* Order Header Card */}
         <Card style={{ padding: 16, gap: 12 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <View style={{ flex: 1 }}>
-              <Text style={{ fontFamily: FONT.mono, color: colors.amber, fontSize: 10, fontWeight: '700' }}>
-                {order.orderNumber}
-              </Text>
-              <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 18, marginTop: 2 }}>
-                {order.projectTitle}
-              </Text>
+              <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 18 }}>{order.projectTitle}</Text>
               <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12, marginTop: 1 }}>
-                Milestone: {order.milestoneTitle}
+                {order.milestoneTitle} · {t('materialOrderDetail.requestedBy')} {order.requestedByName}
               </Text>
             </View>
             <StatusBadge status={order.status} />
           </View>
 
-          {/* Delivery destination */}
-          <View style={{ backgroundColor: colors.parchment, borderRadius: 12, padding: 12, gap: 6 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <MapPin size={14} color={colors.amber} />
-              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>
-                Site Delivery Address
-              </Text>
+          {order.deliveryAddress ? (
+            <View style={{ backgroundColor: colors.parchment, borderRadius: 12, padding: 12, gap: 6 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <MapPin size={14} color={colors.amber} />
+                <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>{t('materialOrderDetail.deliveryAddress')}</Text>
+              </View>
+              <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12 }}>{order.deliveryAddress}</Text>
             </View>
-            <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12 }}>
-              {order.deliveryAddress}
-            </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-              <Phone size={12} color={colors.inkSubtle} />
-              <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 11 }}>
-                Site Receiver: {order.deliveryContact}
-              </Text>
+          ) : null}
+
+          {order.rejectionReason ? (
+            <View style={{ backgroundColor: colors.seal + '15', borderRadius: 12, padding: 12 }}>
+              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.seal, fontSize: 12 }}>{t('materialOrderDetail.rejectionReason')}</Text>
+              <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12, marginTop: 2 }}>{order.rejectionReason}</Text>
             </View>
-          </View>
+          ) : null}
         </Card>
 
-        {/* Itemized Bill of Materials */}
         <Card style={{ padding: 16, gap: 12 }}>
           <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.5 }}>
-            Ordered Materials Breakdown ({order.items.length})
+            {t('materialOrderDetail.materials')} ({order.items.length})
           </Text>
-
           <View style={{ gap: 8 }}>
-            {order.items.map((it) => (
+            {order.items.map((it, i) => (
               <View
-                key={it.id}
-                style={{
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  paddingVertical: 8,
-                  borderBottomWidth: 1,
-                  borderBottomColor: colors.parchmentDark,
-                }}
+                key={i}
+                style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.parchmentDark }}
               >
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>
-                    {it.name}
-                  </Text>
+                  <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>{it.name}</Text>
                   <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 11, marginTop: 1 }}>
-                    {it.quantity} {it.unit} × {fmt(it.unitPrice)}
+                    {it.quantity} × {fmt(it.unitPrice)}
                   </Text>
                 </View>
-                <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 14 }}>
-                  {fmt(it.totalPrice)}
-                </Text>
+                <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 14 }}>{fmt(it.subtotal)}</Text>
               </View>
             ))}
           </View>
-
-          {/* Total Invoice */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 6 }}>
-            <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 15 }}>
-              Total Guaranteed Invoice
-            </Text>
-            <Text style={{ fontFamily: FONT.serifBold, color: colors.forest, fontSize: 18 }}>
-              {fmt(order.totalAmount)}
-            </Text>
+            <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 15 }}>{t('materialOrderDetail.total')}</Text>
+            <Text style={{ fontFamily: FONT.serifBold, color: colors.forest, fontSize: 18 }}>{fmt(order.totalAmount)}</Text>
           </View>
         </Card>
 
-        {/* Waybill / Dispatch Info */}
-        {order.waybillUrl && (
-          <Card style={{ padding: 16, gap: 10 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <FileText size={16} color={colors.forest} />
-              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-                Delivery Waybill & Packing Slip
+        {order.deliveryConfirmation ? (
+          <Card style={{ padding: 14, backgroundColor: colors.forest + '12', borderColor: colors.forest + '30', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <CheckCircle2 size={22} color={colors.forest} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>{t('materialOrderDetail.deliveryConfirmed')}</Text>
+              <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 11, marginTop: 1 }}>
+                {t('materialOrderDetail.confirmedOnSiteBy')} {order.deliveryConfirmation.confirmedByName}.
               </Text>
             </View>
-            <Image source={{ uri: order.waybillUrl }} style={{ width: '100%', height: 160, borderRadius: 10 }} resizeMode="cover" />
-            {order.notes ? (
-              <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12 }}>
-                {order.notes}
+          </Card>
+        ) : (
+          <Card style={{ padding: 14, backgroundColor: colors.forest + '12', borderColor: colors.forest + '30', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <ShieldCheck size={22} color={colors.forest} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>{t('materialOrderDetail.escrowProtected')}</Text>
+              <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 11, marginTop: 1 }}>
+                {t('materialOrderDetail.escrowProtectedDesc')}
               </Text>
-            ) : null}
+            </View>
           </Card>
         )}
 
-        {/* Escrow Direct Settlement Banner */}
-        <Card style={{ padding: 14, backgroundColor: colors.forest + '12', borderColor: colors.forest + '30', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <ShieldCheck size={22} color={colors.forest} />
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>
-              Direct Supplier Escrow Protection
-            </Text>
-            <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 11, marginTop: 1 }}>
-              Funds are reserved in escrow specifically for this material purchase and released straight to your store MoMo upon delivery confirmation.
-            </Text>
-          </View>
-        </Card>
-
-        {/* Action Decision Buttons */}
         <View style={{ gap: 10, marginTop: 4 }}>
           {isRequested && (
-            <PillButton variant="primary" onPress={handleConfirm} loading={confirmMutation.isPending} fullWidth>
-              Confirm Order & Prepare Materials
-            </PillButton>
+            <>
+              <PillButton variant="primary" onPress={handleConfirm} loading={confirmMutation.isPending} disabled={anyActionPending} fullWidth>
+                {t('materialOrderDetail.confirmOrder')}
+              </PillButton>
+              <PillButton variant="danger" onPress={handleReject} loading={rejectMutation.isPending} disabled={anyActionPending} fullWidth>
+                {t('materialOrderDetail.rejectOrder')}
+              </PillButton>
+            </>
           )}
 
           {isConfirmed && (
-            <PillButton variant="primary" onPress={() => setDispatchModalOpen(true)} fullWidth>
-              Upload Waybill & Dispatch Truck
+            <PillButton variant="primary" onPress={handleMarkOutForDelivery} loading={outForDeliveryMutation.isPending} disabled={anyActionPending} fullWidth>
+              {t('materialOrderDetail.markOutForDelivery')}
             </PillButton>
           )}
 
-          {isDispatched && (
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                backgroundColor: colors.amber + '20',
-                paddingVertical: 12,
-                borderRadius: 14,
-              }}
-            >
+          {isOutForDelivery && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.amber + '20', paddingVertical: 12, borderRadius: 14 }}>
               <Truck size={16} color={colors.amber} />
-              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>
-                In Transit · Awaiting Site Receiver Signoff
-              </Text>
+              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>{t('materialOrderDetail.inTransit')}</Text>
             </View>
           )}
 
           {isDelivered && (
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                backgroundColor: colors.forest + '20',
-                paddingVertical: 12,
-                borderRadius: 14,
-              }}
-            >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.forest + '20', paddingVertical: 12, borderRadius: 14 }}>
               <CheckCircle2 size={16} color={colors.forest} />
-              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forest, fontSize: 13 }}>
-                Delivered · Escrow Settled
-              </Text>
+              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forest, fontSize: 13 }}>{t('materialOrderDetail.delivered')}</Text>
+            </View>
+          )}
+
+          {(isRejected || isCancelled) && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.seal + '15', paddingVertical: 12, borderRadius: 14 }}>
+              <XCircle size={16} color={colors.seal} />
+              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.seal, fontSize: 13 }}>{isRejected ? t('materialOrderDetail.rejected') : t('materialOrderDetail.cancelled')}</Text>
             </View>
           )}
         </View>
       </View>
-
-      {/* Dispatch Truck Modal */}
-      <Modal visible={dispatchModalOpen} transparent animationType="slide" onRequestClose={() => setDispatchModalOpen(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, gap: 16 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 18 }}>Dispatch Material Delivery</Text>
-              <Pressable onPress={() => setDispatchModalOpen(false)} hitSlop={6}>
-                <X size={20} color={colors.inkMuted} />
-              </Pressable>
-            </View>
-
-            <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 13 }}>
-              Attach a photo of the signed delivery waybill and provide driver / truck details.
-            </Text>
-
-            <View style={{ height: 140, backgroundColor: colors.parchment, borderRadius: 12, overflow: 'hidden' }}>
-              <Image source={{ uri: waybillPhoto }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-            </View>
-
-            <TextInput
-              placeholder="Driver name, vehicle plate, delivery notes..."
-              placeholderTextColor={colors.inkSubtle}
-              value={waybillNotes}
-              onChangeText={setWaybillNotes}
-              multiline
-              numberOfLines={3}
-              style={{
-                backgroundColor: colors.parchment,
-                borderRadius: 12,
-                padding: 12,
-                fontFamily: FONT.sans,
-                color: colors.ink,
-                fontSize: 13,
-                minHeight: 70,
-                textAlignVertical: 'top',
-              }}
-            />
-
-            <PillButton variant="primary" onPress={handleDispatch} loading={dispatchMutation.isPending} fullWidth>
-              Confirm Dispatch & Alert Site
-            </PillButton>
-          </View>
-        </View>
-      </Modal>
     </Screen>
   );
 }

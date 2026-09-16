@@ -68,7 +68,6 @@ see a differently-labeled 2nd tab; Verifier/Admin reachable via Profile menu.
 | `/workspace/projects` | WorkspaceProjectsScreen (kanban) | `GET /projects?ownerId=me`, `POST /projects/:id/cancel` |
 | `/funder/browse` | BrowseProjectsScreen | `GET /projects?projectType=funding` |
 | `/funder/project/:id` | ProjectDetailScreen | `GET /projects/:id`, `GET /escrows?projectId=` |
-| `/funder/create` | CreateProjectScreen | `POST /projects` |
 | `/funder/fund` | FundProjectScreen | `POST /projects/:id/fund` (Stripe/MoMo/OM), `POST /escrows/:id/refresh-status` |
 | `/funder/milestones` | MilestonesScreen | embedded in project |
 | `/funder/review/:id?` | MilestoneReviewScreen (approve/reject) | `POST /projects/:id/milestones/:mid/approval` |

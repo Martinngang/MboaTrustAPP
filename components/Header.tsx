@@ -1,12 +1,18 @@
-import { View, Text, Pressable } from 'react-native';
-import { ChevronLeft, ChevronDown, Bell, Search, Sun, Moon, Sparkles, Plus } from 'lucide-react-native';
-import { useNavigation } from '@react-navigation/native';
+import { View, Text, Image, Pressable } from 'react-native';
+import { ChevronLeft, ChevronDown, Bell, Search, Sun, Moon, Plus, LifeBuoy } from 'lucide-react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { useTheme } from '../theme/ThemeProvider';
 import { FONT } from '../theme/tokens';
 import { useApp } from '../context/AppContext';
 import { Avatar } from './Avatar';
+import { ConnectivityIndicator } from './ConnectivityIndicator';
 import { useNotificationsQuery } from '../api/notifications';
 import { ROLE_DEFINITIONS } from './RoleSelectorModal';
+
+// "ProjectDetail" -> "Project Detail" — no manual per-route label map needed.
+function humanizeRouteName(name: string): string {
+  return name.replace(/([a-z])([A-Z])/g, '$1 $2');
+}
 
 const QUICK_CREATE_LABELS: Record<string, string> = {
   funder: 'Project',
@@ -45,6 +51,7 @@ export function Header({
 }: HeaderProps) {
   const { colors, mode, preference, setPreference } = useTheme();
   const navigation = useNavigation<any>();
+  const route = useRoute();
   const {
     activeRole,
     name,
@@ -52,6 +59,7 @@ export function Header({
     setNotificationsOpen,
     setRoleSelectorOpen,
     setQuickActionOpen,
+    setFeedbackSheetOpen,
   } = useApp();
 
   const { data: notifData } = useNotificationsQuery(true);
@@ -147,12 +155,13 @@ export function Header({
                   width: 28,
                   height: 28,
                   borderRadius: 9,
-                  backgroundColor: colors.forest,
+                  backgroundColor: '#FFFFFF',
                   alignItems: 'center',
                   justifyContent: 'center',
+                  overflow: 'hidden',
                 }}
               >
-                <Sparkles size={16} color="#fff" />
+                <Image source={require('../assets/brand-mark.png')} style={{ width: 22, height: 22 }} resizeMode="contain" />
               </View>
               <Text
                 style={{
@@ -240,6 +249,8 @@ export function Header({
                 </Pressable>
               )}
 
+              <ConnectivityIndicator />
+
               {/* Quick Search */}
               {showSearch && (
                 <Pressable
@@ -283,6 +294,25 @@ export function Header({
                   )}
                 </Pressable>
               )}
+
+              {/* Help & feedback — reachable from every screen, captures the
+                  current route name as context at the moment it's tapped. */}
+              <Pressable
+                onPress={() => setFeedbackSheetOpen(true, { screen: route.name, screenLabel: humanizeRouteName(route.name) })}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel="Help & feedback"
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  backgroundColor: colors.parchment,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <LifeBuoy size={15} color={colors.inkMuted} />
+              </Pressable>
 
               {/* Notification Bell */}
               {showNotifications && (

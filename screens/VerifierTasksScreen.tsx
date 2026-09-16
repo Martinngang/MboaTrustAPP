@@ -1,107 +1,157 @@
 import { useState } from 'react';
-import { View, Text, Pressable } from 'react-native';
-import { ShieldCheck, MapPin, Camera, Clock, CheckCircle2 } from 'lucide-react-native';
+import { View, Text, Pressable, ActivityIndicator } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { ShieldCheck, MapPin, ArrowRight, UserCheck } from 'lucide-react-native';
 import { Screen } from '../components/Screen';
+import { Header } from '../components/Header';
 import { Card } from '../components/Card';
 import { StatusBadge } from '../components/StatusBadge';
+import { EmptyState } from '../components/EmptyState';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useTheme } from '../theme/ThemeProvider';
 import { FONT } from '../theme/tokens';
+import { useMyVerifierProfileQuery, useVerificationTasksQuery } from '../api/verifier';
+import { useApp } from '../context/AppContext';
+import type { MainStackParamList } from '../navigation/types';
+import { useTranslation } from '../i18n/useTranslation';
+import type { TranslationKey } from '../i18n/translations';
 
-interface VerificationTask {
-  id: string;
-  taskNumber: string;
-  projectName: string;
-  milestoneTitle: string;
-  location: string;
-  scheduledDate: string;
-  status: string;
-  evidenceItems: number;
-}
-
-const DEMO_TASKS: VerificationTask[] = [
-  {
-    id: 'task-1',
-    taskNumber: 'VER-2026-041',
-    projectName: 'Villa Yaoundé Phase 2',
-    milestoneTitle: 'Reinforced Concrete Slab Pouring',
-    location: 'Odza, Yaoundé',
-    scheduledDate: 'Today, 14:00',
-    status: 'pending',
-    evidenceItems: 4,
-  },
-  {
-    id: 'task-2',
-    taskNumber: 'VER-2026-039',
-    projectName: 'Kribi Residential Plot',
-    milestoneTitle: 'Boundary Demarcation & Geodetic Pillars',
-    location: 'Ngoye, Kribi',
-    scheduledDate: 'Tomorrow, 09:30',
-    status: 'in_progress',
-    evidenceItems: 6,
-  },
-  {
-    id: 'task-3',
-    taskNumber: 'VER-2026-032',
-    projectName: 'Douala Commercial Block',
-    milestoneTitle: 'Foundation Excavation & Compaction Test',
-    location: 'Bonapriso, Douala',
-    scheduledDate: 'Completed 25 Aug',
-    status: 'verified',
-    evidenceItems: 8,
-  },
-];
+// The single, canonical "browse my verification tasks" implementation —
+// reused under two names/entry points (this bottom-tab screen, and
+// screens/verifier/VerifierDashboardScreen.tsx's quick-action shortcut,
+// which just re-exports this component). These used to be two independently
+// maintained copies that had already drifted apart (different filter sets,
+// one missing hero stats/profile link, the other missing pull-to-refresh) —
+// now there's one implementation to keep correct.
+const FILTER_TABS = ['All', 'Assigned', 'In Progress', 'Completed'] as const;
+const FILTER_TAB_KEY: Record<(typeof FILTER_TABS)[number], TranslationKey> = {
+  All: 'verifierDash.tabAll',
+  Assigned: 'verifierDash.tabAssigned',
+  'In Progress': 'verifierDash.tabInProgress',
+  Completed: 'verifierDash.tabCompleted',
+};
 
 export function VerifierTasksScreen() {
-  const { colors } = useTheme();
-  const [filter, setFilter] = useState<'all' | 'pending' | 'in_progress' | 'verified'>('all');
+  return <VerifierTaskListContent showBack={false} />;
+}
 
-  const filtered = DEMO_TASKS.filter((t) => (filter === 'all' ? true : t.status === filter));
+/** Exported so screens/verifier/VerifierDashboardScreen.tsx (the same task
+ * list, reached via the global quick-action shortcut instead of the bottom
+ * tab) can render it with a back button instead of duplicating the screen. */
+export function VerifierTaskListContent({ showBack }: { showBack: boolean }) {
+  const { colors } = useTheme();
+  const { t } = useTranslation();
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const { user } = useApp();
+  const pullToRefresh = usePullToRefresh();
+
+  const [activeTab, setActiveTab] = useState<(typeof FILTER_TABS)[number]>('All');
+
+  const { data: profile } = useMyVerifierProfileQuery();
+  const { data: tasks, isLoading: isLoadingTasks } = useVerificationTasksQuery();
+
+  const filteredTasks = (tasks || []).filter((task) => {
+    if (activeTab === 'All') return true;
+    if (activeTab === 'Assigned') return task.status === 'assigned';
+    if (activeTab === 'In Progress') return task.status === 'in_progress';
+    if (activeTab === 'Completed') return task.status === 'submitted';
+    return true;
+  });
+  const completedCount = (tasks || []).filter((task) => task.status === 'submitted').length;
 
   return (
-    <Screen>
-      <View style={{ padding: 16, gap: 16 }}>
-        {/* Title */}
-        <View>
-          <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 20 }}>
-            Verification Tasks
+    <Screen
+      {...pullToRefresh}
+      header={
+        <Header
+          title={profile?.fullName || user?.fullName || t('verifierDash.workspaceFallback')}
+          subtitle={t('verifierDash.subtitle')}
+          back={showBack}
+          action={
+            <Pressable
+              onPress={() => navigation.navigate('VerifierProfile')}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 14,
+                backgroundColor: colors.forest + '20',
+              }}
+            >
+              <UserCheck size={14} color={colors.forest} />
+              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forest, fontSize: 12 }}>
+                {t('verifierDash.profile')}
+              </Text>
+            </Pressable>
+          }
+        />
+      }
+    >
+      <View style={{ padding: 16, gap: 18 }}>
+        {/* Verifier Hero Stats */}
+        <Card style={{ padding: 18, backgroundColor: colors.forestDark, gap: 14 }}>
+          <Text style={{ fontFamily: FONT.mono, color: 'rgba(255,255,255,0.7)', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.5 }}>
+            {t('verifierDash.fieldVerifier')}
           </Text>
-          <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12, marginTop: 2 }}>
-            Objective field audits & milestone proof validations
+          <Text style={{ fontFamily: FONT.serifBold, color: '#fff', fontSize: 18, marginTop: -8 }}>
+            {profile?.fullName || user?.fullName || t('verifierDash.verifierFallback')}
           </Text>
-        </View>
 
-        {/* Filter Chips */}
-        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-          {[
-            { id: 'all', label: 'All Tasks' },
-            { id: 'pending', label: 'Pending' },
-            { id: 'in_progress', label: 'In Progress' },
-            { id: 'verified', label: 'Completed' },
-          ].map((tab) => {
-            const active = filter === tab.id;
+          {/* 2 real metric tiles — no rating/bounty fields exist on the
+              backend, so only what's genuinely derivable from real tasks
+              is shown here. */}
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 12, padding: 10 }}>
+              <Text style={{ fontFamily: FONT.mono, color: 'rgba(255,255,255,0.7)', fontSize: 9, textTransform: 'uppercase' }}>
+                {t('verifierDash.activeAudits')}
+              </Text>
+              <Text style={{ fontFamily: FONT.serifBold, color: '#fff', fontSize: 15, marginTop: 2 }}>
+                {(tasks || []).filter((task) => task.status !== 'submitted').length} {t('verifierDash.pending')}
+              </Text>
+            </View>
+
+            <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 12, padding: 10 }}>
+              <Text style={{ fontFamily: FONT.mono, color: 'rgba(255,255,255,0.7)', fontSize: 9, textTransform: 'uppercase' }}>
+                {t('verifierDash.completed')}
+              </Text>
+              <Text style={{ fontFamily: FONT.serifBold, color: '#fff', fontSize: 15, marginTop: 2 }}>
+                {completedCount} {t('verifierDash.audits')}
+              </Text>
+            </View>
+          </View>
+        </Card>
+
+        {/* Filter Tabs */}
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {FILTER_TABS.map((tab) => {
+            const active = activeTab === tab;
             return (
               <Pressable
-                key={tab.id}
-                onPress={() => setFilter(tab.id as any)}
+                key={tab}
+                onPress={() => setActiveTab(tab)}
                 accessibilityRole="tab"
                 accessibilityState={{ selected: active }}
                 style={{
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
+                  flex: 1,
+                  paddingVertical: 8,
                   borderRadius: 12,
                   borderWidth: 1,
-                  borderColor: active ? colors.moss : colors.parchmentDark,
-                  backgroundColor: active ? colors.moss + '18' : colors.surface,
+                  borderColor: active ? colors.forest : colors.parchmentDark,
+                  backgroundColor: active ? colors.forest + '18' : colors.surface,
+                  alignItems: 'center',
                 }}
               >
                 <Text
                   style={{
                     fontFamily: FONT.sansMedium,
                     fontSize: 12,
-                    color: active ? colors.moss : colors.inkMuted,
+                    color: active ? colors.forest : colors.inkMuted,
                   }}
                 >
-                  {tab.label}
+                  {t(FILTER_TAB_KEY[tab])}
                 </Text>
               </Pressable>
             );
@@ -109,70 +159,92 @@ export function VerifierTasksScreen() {
         </View>
 
         {/* Tasks List */}
-        {filtered.map((task) => (
-          <Card key={task.id} style={{ padding: 16, gap: 12 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <View>
-                <Text style={{ fontFamily: FONT.mono, color: colors.moss, fontSize: 11, fontWeight: '700' }}>
-                  {task.taskNumber}
-                </Text>
-                <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 15, marginTop: 2 }}>
-                  {task.projectName}
-                </Text>
-                <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 13, marginTop: 1 }}>
-                  Milestone: {task.milestoneTitle}
-                </Text>
-              </View>
-              <StatusBadge status={task.status} />
-            </View>
-
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <MapPin size={13} color={colors.inkSubtle} />
-                <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
-                  {task.location}
-                </Text>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Clock size={13} color={colors.inkSubtle} />
-                <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
-                  {task.scheduledDate}
-                </Text>
-              </View>
-            </View>
-
-            <View
-              style={{
-                flexDirection: 'row',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                paddingTop: 10,
-                borderTopWidth: 1,
-                borderTopColor: colors.parchmentDark,
-              }}
+        {isLoadingTasks ? (
+          <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+            <ActivityIndicator color={colors.forest} />
+          </View>
+        ) : filteredTasks.length === 0 ? (
+          <EmptyState
+            icon={ShieldCheck}
+            title={t('verifierDash.noInspectionTasks')}
+            description={t('verifierDash.noTasksDesc')}
+          />
+        ) : (
+          filteredTasks.map((task) => (
+            <Pressable
+              key={task.id}
+              onPress={() => navigation.navigate('VerifierTaskDetail', { taskId: task.id })}
+              accessibilityRole="button"
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Camera size={14} color={colors.inkSubtle} />
-                <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
-                  {task.evidenceItems} inspection items
-                </Text>
-              </View>
+              <Card style={{ padding: 16, gap: 12 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <View style={{ flex: 1 }}>
+                    <View
+                      style={{
+                        alignSelf: 'flex-start',
+                        paddingHorizontal: 8,
+                        paddingVertical: 2,
+                        borderRadius: 6,
+                        backgroundColor: task.targetType === 'land_listing' ? colors.seal + '18' : colors.forest + '18',
+                        marginBottom: 4,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontFamily: FONT.mono,
+                          color: task.targetType === 'land_listing' ? colors.seal : colors.forest,
+                          fontSize: 10,
+                          fontWeight: '700',
+                          textTransform: 'uppercase',
+                        }}
+                      >
+                        {task.targetType === 'land_listing' ? t('verifierDash.cadastralLandAudit') : t('verifierDash.milestoneConstructionAudit')}
+                      </Text>
+                    </View>
+                    <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 16 }}>
+                      {task.projectTitle}
+                    </Text>
+                    {task.milestoneTitle ? (
+                      <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12, marginTop: 1 }}>
+                        {t('verifierDash.target')} {task.milestoneTitle}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <StatusBadge status={task.status} />
+                </View>
 
-              <View
-                style={{
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
-                  borderRadius: 10,
-                  backgroundColor: colors.moss,
-                }}
-              >
-                <Text style={{ fontFamily: FONT.sansSemiBold, color: '#fff', fontSize: 12 }}>
-                  {task.status === 'verified' ? 'View Report' : 'Perform Audit'}
-                </Text>
-              </View>
-            </View>
-          </Card>
-        ))}
+                {/* Location */}
+                {task.location ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <MapPin size={12} color={colors.inkSubtle} />
+                    <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
+                      {task.location}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Footer */}
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'flex-end',
+                    alignItems: 'center',
+                    paddingTop: 10,
+                    borderTopWidth: 1,
+                    borderTopColor: colors.parchmentDark,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forest, fontSize: 12 }}>
+                      {task.status === 'submitted' ? t('verifierDash.viewReport') : t('verifierDash.performAudit')}
+                    </Text>
+                    <ArrowRight size={13} color={colors.forest} />
+                  </View>
+                </View>
+              </Card>
+            </Pressable>
+          ))
+        )}
       </View>
     </Screen>
   );

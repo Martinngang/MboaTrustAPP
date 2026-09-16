@@ -20,25 +20,36 @@ import { EmptyState } from '../../components/EmptyState';
 import { fmt } from '../../components/fmt';
 import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
-import { useJobsQuery, useMyBidsQuery } from '../../api/contracts';
+import { useJobsQuery, useBidsQuery } from '../../api/tenders';
+import { useApp } from '../../context/AppContext';
+import { PROJECT_CATEGORIES } from '../../inventoryTaxonomy';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
 
-const CATEGORIES = ['All', 'Masonry', 'Electrical', 'Plumbing', 'Roofing', 'Infrastructure', 'Finishing'];
+// Unified onto the same sector taxonomy web's BrowseJobsScreen filters on
+// (PROJECT_CATEGORIES) — this used to be a third, mobile-only trade-skill
+// list that would never match a tender's real `category` value no matter
+// which platform posted it.
+const CATEGORIES = ['All', ...PROJECT_CATEGORIES];
 
 export function BrowseJobsScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
 
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortDesc, setSortDesc] = useState(true);
 
+  const { user } = useApp();
   const { data: jobs, isLoading } = useJobsQuery();
-  const { data: myBids } = useMyBidsQuery();
+  const { data: myBids } = useBidsQuery({ contractorId: user?._id });
 
-  const appliedJobIds = new Set((myBids || []).map((b) => b.projectId));
+  const appliedJobIds = new Set((myBids || []).map((b) => b.jobId));
 
-  const filteredJobs = (jobs || [])
+  const openJobs = (jobs || []).filter((j) => j.status === 'open');
+
+  const filteredJobs = openJobs
     .filter((j) => {
       const matchesCat = selectedCategory === 'All' || j.category.toLowerCase() === selectedCategory.toLowerCase();
       const q = searchQuery.trim().toLowerCase();
@@ -51,8 +62,8 @@ export function BrowseJobsScreen() {
     <Screen
       header={
         <Header
-          title="Open Tenders & Jobs"
-          subtitle={`${filteredJobs.length} available for bidding`}
+          title={t('browseJobs.title')}
+          subtitle={`${filteredJobs.length} ${t('browseJobs.availableForBidding')}`}
           back
           action={
             <Pressable
@@ -68,7 +79,7 @@ export function BrowseJobsScreen() {
               }}
             >
               <Text style={{ fontFamily: FONT.sansSemiBold, color: '#fff', fontSize: 12 }}>
-                My Bids →
+                {t('browseJobs.myBids')}
               </Text>
             </Pressable>
           }
@@ -96,7 +107,7 @@ export function BrowseJobsScreen() {
             <TextInput
               value={searchQuery}
               onChangeText={setSearchQuery}
-              placeholder="Search tenders, location..."
+              placeholder={t('browseJobs.searchPlaceholder')}
               placeholderTextColor={colors.inkSubtle}
               style={{
                 flex: 1,
@@ -128,7 +139,7 @@ export function BrowseJobsScreen() {
           >
             <ArrowUpDown size={14} color={colors.inkMuted} />
             <Text style={{ fontFamily: FONT.mono, color: colors.inkMuted, fontSize: 11, fontWeight: '700' }}>
-              {sortDesc ? 'Max' : 'Min'}
+              {sortDesc ? t('browseJobs.max') : t('browseJobs.min')}
             </Text>
           </Pressable>
         </View>
@@ -174,8 +185,8 @@ export function BrowseJobsScreen() {
         ) : filteredJobs.length === 0 ? (
           <EmptyState
             icon={Briefcase}
-            title="No tenders found"
-            description="Try selecting a different trade category or clearing your search."
+            title={t('browseJobs.noTendersFound')}
+            description={t('browseJobs.noTendersDesc')}
           />
         ) : (
           filteredJobs.map((job) => {
@@ -202,7 +213,7 @@ export function BrowseJobsScreen() {
                         }}
                       >
                         <Text style={{ fontFamily: FONT.mono, color: colors.forest, fontSize: 10, fontWeight: '700' }}>
-                          Applied
+                          {t('browseJobs.applied')}
                         </Text>
                       </View>
                     ) : (
@@ -215,7 +226,7 @@ export function BrowseJobsScreen() {
                         }}
                       >
                         <Text style={{ fontFamily: FONT.mono, color: colors.steel, fontSize: 10, fontWeight: '700' }}>
-                          {job.bidsCount} Bids
+                          {job.bids} {t('browseJobs.bids')}
                         </Text>
                       </View>
                     )}
@@ -247,7 +258,7 @@ export function BrowseJobsScreen() {
                   >
                     <View>
                       <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase' }}>
-                        Target Budget
+                        {t('browseJobs.targetBudget')}
                       </Text>
                       <Text style={{ fontFamily: FONT.serifBold, color: colors.forest, fontSize: 16, marginTop: 1 }}>
                         {fmt(job.budget)}
@@ -256,7 +267,7 @@ export function BrowseJobsScreen() {
 
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                       <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.steel, fontSize: 12 }}>
-                        View Tender
+                        {t('browseJobs.viewTender')}
                       </Text>
                       <ArrowRight size={14} color={colors.steel} />
                     </View>

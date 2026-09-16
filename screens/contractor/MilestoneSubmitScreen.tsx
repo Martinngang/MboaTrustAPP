@@ -1,17 +1,11 @@
-import { useState } from 'react';
-import { View, Text, Pressable, TextInput, Image, ScrollView, Alert } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, Text, TextInput, Image, Pressable, ActivityIndicator } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import {
-  Camera,
-  MapPin,
-  CheckCircle2,
-  Trash2,
-  Plus,
-  ShieldCheck,
-  UploadCloud,
-} from 'lucide-react-native';
+import { Camera, ShieldCheck, WifiOff, MapPin, Plus, Trash2 } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { Screen } from '../../components/Screen';
 import { Header } from '../../components/Header';
 import { Card } from '../../components/Card';
@@ -20,102 +14,215 @@ import { useToast } from '../../components/Toast';
 import { fmt } from '../../components/fmt';
 import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
+import { useProjectQuery } from '../../api/projects';
 import { useSubmitMilestoneEvidenceMutation } from '../../api/contracts';
+import { useReverseGeocodeQuery } from '../../api/tools';
+import { apiErrorMessage } from '../../api/client';
 import { AIPhotoInspector } from '../../components/AIPhotoInspector';
+import { useOfflineQueue, type QueuedMilestoneEvidence } from '../../context/OfflineQueueContext';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
 
 type RouteProps = RouteProp<MainStackParamList, 'MilestoneSubmit'>;
 
-const DEMO_EVIDENCE_PREVIEWS = [
-  'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=600&h=400&fit=crop&auto=format',
-  'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?w=600&h=400&fit=crop&auto=format',
-];
+const MIN_PHOTOS = 2;
+
+interface Photo {
+  uri: string;
+  mimeType: string;
+}
 
 export function MilestoneSubmitScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const route = useRoute<RouteProps>();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { show: showToast } = useToast();
   const evidenceMutation = useSubmitMilestoneEvidenceMutation();
+  const { isOnline, queue, enqueueMilestoneEvidence, syncNow, isSyncing } = useOfflineQueue();
 
-  const { projectId, milestoneId = 'm-1', milestoneTitle = 'Foundation & Earthworks' } = route.params;
+  const { projectId, milestoneId: routeMilestoneId } = route.params;
+  const { data: project, isLoading } = useProjectQuery(projectId);
 
-  const [photos, setPhotos] = useState<string[]>(DEMO_EVIDENCE_PREVIEWS);
-  const [notes, setNotes] = useState(
-    'Foundation trench excavation completed to 1.5m depth, compacted gravel base laid, and concrete slab poured with reinforced steel rebar cage.'
+  const targetMilestone = project
+    ? project.milestones.find((m) => (routeMilestoneId ? m.id === routeMilestoneId : m.status === 'pending')) ||
+      project.milestones[0]
+    : undefined;
+
+  // The AI inspector owns the first ("primary") photo slot; anything past it
+  // is a plain repeatable pick, mirroring VerifierSubmitReportScreen's
+  // add/remove pattern. Both feed the same evidence submission.
+  const [primaryPhoto, setPrimaryPhoto] = useState<Photo | null>(null);
+  const [extraPhotos, setExtraPhotos] = useState<Photo[]>([]);
+  const photos: Photo[] = primaryPhoto ? [primaryPhoto, ...extraPhotos] : extraPhotos;
+
+  const [notes, setNotes] = useState('');
+  const [queuedForSync, setQueuedForSync] = useState(false);
+
+  // Real device GPS — works fully offline, no network required to read a fix.
+  const [geo, setGeo] = useState<{ lat: number; lng: number; label: string } | null>(null);
+  const [geoStatus, setGeoStatus] = useState<'locating' | 'ok' | 'unavailable'>('locating');
+  // Resolves the raw fix to a real place name the moment it comes in — the
+  // raw-coordinate label stays as the fallback while this loads or fails.
+  const { data: placeName, isLoading: placeNameLoading } = useReverseGeocodeQuery(geo?.lat, geo?.lng);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          if (!cancelled) setGeoStatus('unavailable');
+          return;
+        }
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        if (cancelled) return;
+        const { latitude, longitude } = pos.coords;
+        setGeo({ lat: latitude, lng: longitude, label: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}` });
+        setGeoStatus('ok');
+      } catch {
+        if (!cancelled) setGeoStatus('unavailable');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const addExtraPhoto = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      showToast({ title: t('milestoneSubmit.permissionRequired'), description: t('milestoneSubmit.cameraRollAccess'), tone: 'error' });
+      return;
+    }
+    const picked = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.85 });
+    if (picked.canceled || !picked.assets?.[0]) return;
+    const asset = picked.assets[0];
+    setExtraPhotos((prev) => [...prev, { uri: asset.uri, mimeType: asset.mimeType ?? 'image/jpeg' }]);
+  };
+
+  const removeExtraPhoto = (idx: number) => {
+    setExtraPhotos((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  // If this milestone already has unsynced queue entries (e.g. captured
+  // offline, navigated away, came back before they synced) surface them
+  // instead of letting the contractor submit duplicates.
+  const existingQueued = queue.filter(
+    (q): q is QueuedMilestoneEvidence => q.kind === 'milestone_evidence' && q.projectId === projectId && q.milestoneId === targetMilestone?.id,
   );
-  const [geotagVerified, setGeotagVerified] = useState(true);
-
-  const addPhoto = () => {
-    // Adds a demo high-res site photo
-    const samplePhotos = [
-      'https://images.unsplash.com/photo-1503387762-592deb58ef4e?w=600&h=400&fit=crop&auto=format',
-      'https://images.unsplash.com/photo-1517581177682-a085bb7ffb15?w=600&h=400&fit=crop&auto=format',
-    ];
-    const newPhoto = samplePhotos[photos.length % samplePhotos.length];
-    setPhotos((prev) => [...prev, newPhoto]);
-  };
-
-  const removePhoto = (index: number) => {
-    setPhotos((prev) => prev.filter((_, i) => i !== index));
-  };
 
   const handleSubmit = async () => {
-    if (photos.length === 0) {
-      showToast({ title: 'Photos Required', description: 'Please attach at least one photo of the completed work.', tone: 'error' });
+    if (photos.length < MIN_PHOTOS) {
+      showToast({ title: t('milestoneSubmit.photosRequired'), description: `${t('milestoneSubmit.attachAtLeast')} ${MIN_PHOTOS} ${t('milestoneSubmit.photosOfWork')}`, tone: 'error' });
       return;
     }
     if (!notes.trim()) {
-      showToast({ title: 'Notes Required', description: 'Please provide completion notes and observations.', tone: 'error' });
+      showToast({ title: t('milestoneSubmit.notesRequired'), description: t('milestoneSubmit.notesRequiredDesc'), tone: 'error' });
+      return;
+    }
+    if (!targetMilestone) return;
+
+    const geotagLat = geo?.lat;
+    const geotagLng = geo?.lng;
+    const resolvedPlaceName = placeName ?? undefined;
+
+    if (!isOnline) {
+      // The backend stores one Evidence sub-document per file, so — same as
+      // the web offline queue and the online loop below — a multi-photo
+      // submission becomes one queued item per photo, all sharing the same
+      // notes/geotag.
+      for (let i = 0; i < photos.length; i++) {
+        const photo = photos[i];
+        await enqueueMilestoneEvidence({
+          kind: 'milestone_evidence',
+          projectId,
+          projectTitle: project?.title ?? '',
+          milestoneId: targetMilestone.id,
+          milestoneTitle: targetMilestone.title,
+          photoUri: photo.uri,
+          fileName: `evidence-${i + 1}.jpg`,
+          mimeType: photo.mimeType,
+          notes: notes.trim(),
+          geotagLat,
+          geotagLng,
+          placeName: resolvedPlaceName,
+        });
+      }
+      setQueuedForSync(true);
+      showToast({
+        title: t('milestoneSubmit.savedForSync'),
+        description: t('milestoneSubmit.offlineDesc'),
+        tone: 'success',
+      });
       return;
     }
 
     try {
-      await evidenceMutation.mutateAsync({
-        projectId,
-        milestoneId,
-        fileUrl: photos[0],
-        notes: notes.trim(),
-        geotag: geotagVerified ? { lat: 3.848, lng: 11.5021 } : undefined,
-      });
+      // One POST per file (the endpoint only accepts a single file), sequential
+      // to keep evidence order deterministic — mirrors the web submit loop.
+      for (let i = 0; i < photos.length; i++) {
+        const photo = photos[i];
+        await evidenceMutation.mutateAsync({
+          projectId,
+          milestoneId: targetMilestone.id,
+          file: { uri: photo.uri, fileName: `evidence-${i + 1}.jpg`, mimeType: photo.mimeType },
+          notes: notes.trim(),
+          geotagLat,
+          geotagLng,
+          placeName: resolvedPlaceName,
+        });
+      }
 
       showToast({
-        title: 'Evidence Submitted!',
-        description: 'Funder and Field Verifier have been notified to inspect and release funds.',
+        title: t('milestoneSubmit.evidenceSubmitted'),
+        description: t('milestoneSubmit.notifiedDesc'),
         tone: 'success',
       });
       navigation.goBack();
-    } catch (err: any) {
+    } catch (err) {
       showToast({
-        title: 'Submission Error',
-        description: err?.message || 'Could not submit evidence. Please try again.',
+        title: t('milestoneSubmit.submissionError'),
+        description: apiErrorMessage(err, t('milestoneSubmit.couldNotSubmit')),
         tone: 'error',
       });
     }
   };
 
+  if (isLoading || !project) {
+    return (
+      <Screen header={<Header title={t('milestoneSubmit.title')} back />}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60 }}>
+          <ActivityIndicator color={colors.forest} />
+        </View>
+      </Screen>
+    );
+  }
+
   return (
-    <Screen header={<Header title="Submit Milestone Proof" subtitle={milestoneTitle} back />}>
+    <Screen header={<Header title={t('milestoneSubmit.title')} subtitle={targetMilestone?.title} back />}>
       <View style={{ padding: 16, gap: 18 }}>
         {/* Milestone Info */}
         <Card style={{ padding: 14, backgroundColor: colors.forest + '15', borderColor: colors.forest + '35', gap: 4 }}>
           <Text style={{ fontFamily: FONT.mono, color: colors.forest, fontSize: 10, textTransform: 'uppercase', fontWeight: '700' }}>
-            Active Milestone Tranche
+            {t('milestoneSubmit.activeMilestoneTranche')}
           </Text>
           <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 16 }}>
-            {milestoneTitle}
+            {targetMilestone?.title || t('milestoneSubmit.milestoneFallback')}
           </Text>
-          <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12 }}>
-            Payout Value: <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forest }}>{fmt(1800000)}</Text>
-          </Text>
+          {targetMilestone ? (
+            <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12 }}>
+              {t('milestoneSubmit.payoutValue')} <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forest }}>{fmt(targetMilestone.amount)}</Text>
+            </Text>
+          ) : null}
         </Card>
 
-        {/* AI Photo Inspector */}
+        {/* Site Photo & AI Inspector */}
         <View style={{ gap: 8 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <ShieldCheck size={18} color={colors.forest} />
+            <Camera size={18} color={colors.forest} />
             <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 16 }}>
-              AI Site Inspector
+              {t('milestoneSubmit.sitePhotoEvidence')} ({photos.length})
             </Text>
             <View style={{ paddingHorizontal: 7, paddingVertical: 2, backgroundColor: colors.forest + '18', borderRadius: 8 }}>
               <Text style={{ fontFamily: FONT.mono, color: colors.forest, fontSize: 9, textTransform: 'uppercase', letterSpacing: 1 }}>
@@ -124,54 +231,23 @@ export function MilestoneSubmitScreen() {
             </View>
           </View>
           <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12 }}>
-            Upload a site photo for instant AI quality audit and fraud detection before submitting to the funder.
+            {t('milestoneSubmit.uploadRealPhotosDesc')} {MIN_PHOTOS} {t('milestoneSubmit.photosRequiredSuffix')}
           </Text>
           <AIPhotoInspector
-            label="Upload Milestone Site Photo for AI Inspection"
-            onPhotoSelected={(base64) => { /* saved to upload queue */ }}
-            onAnalysisComplete={(result) => {
-              if (result.verdict === 'fail') {
-                showToast({ title: 'AI Flagged Photo', description: result.summary, tone: 'error' });
-              }
+            label={t('milestoneSubmit.uploadMilestonePhoto')}
+            onPhotoSelected={(_base64, mimeType, uri) => {
+              setPrimaryPhoto({ uri, mimeType });
             }}
           />
-        </View>
 
-        {/* Photo Evidence Uploader */}
-        <View style={{ gap: 10 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Camera size={18} color={colors.forest} />
-              <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 16 }}>
-                Site Photos ({photos.length})
-              </Text>
-            </View>
-
-            <Pressable
-              onPress={addPhoto}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-                backgroundColor: colors.forest,
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                borderRadius: 10,
-              }}
-            >
-              <Plus size={14} color="#fff" />
-              <Text style={{ fontFamily: FONT.sansSemiBold, color: '#fff', fontSize: 12 }}>Add Photo</Text>
-            </Pressable>
-          </View>
-
-          {/* Photo Gallery Grid */}
-          <View style={{ gap: 12 }}>
-            {photos.map((uri, idx) => (
+          {/* Additional photos */}
+          <View style={{ gap: 10, marginTop: 4 }}>
+            {extraPhotos.map((photo, idx) => (
               <Card key={idx} style={{ overflow: 'hidden' }}>
-                <View style={{ height: 160, backgroundColor: colors.parchment, position: 'relative' }}>
-                  <Image source={{ uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                <View style={{ height: 140, backgroundColor: colors.parchment, position: 'relative' }}>
+                  <Image source={{ uri: photo.uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                   <Pressable
-                    onPress={() => removePhoto(idx)}
+                    onPress={() => removeExtraPhoto(idx)}
                     hitSlop={6}
                     style={{
                       position: 'absolute',
@@ -190,29 +266,58 @@ export function MilestoneSubmitScreen() {
                 </View>
               </Card>
             ))}
+            <Pressable
+              onPress={addExtraPhoto}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                paddingVertical: 12,
+                borderRadius: 14,
+                borderWidth: 2,
+                borderStyle: 'dashed',
+                borderColor: colors.forest,
+              }}
+            >
+              <Plus size={16} color={colors.forest} />
+              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forest, fontSize: 13 }}>{t('milestoneSubmit.addAnotherPhoto')}</Text>
+            </Pressable>
           </View>
         </View>
 
-        {/* GPS Geotag Verification Banner */}
-        <Card style={{ padding: 14, backgroundColor: colors.surface, gap: 8 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <MapPin size={18} color={colors.forest} />
-            <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>
-              On-Site GPS Geotag Match
-            </Text>
+        {/* Geotag display — real device GPS, no network required to capture */}
+        <Card style={{ padding: 14, gap: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.forest + '15' }}>
+              <MapPin size={16} color={colors.forest} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>
+                {geoStatus === 'locating' ? t('milestoneSubmit.locating') : geoStatus === 'ok' ? t('milestoneSubmit.gpsAttached') : t('milestoneSubmit.locationUnavailable')}
+              </Text>
+              <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, marginTop: 1 }}>
+                {geoStatus === 'ok' && geo
+                  ? placeNameLoading
+                    ? t('milestoneSubmit.resolvingPlaceName')
+                    : placeName
+                      ? `${placeName} (${geo.label})`
+                      : geo.label
+                  : geoStatus === 'unavailable'
+                    ? t('milestoneSubmit.enableLocationAccess')
+                    : t('milestoneSubmit.waitingForGps')}
+              </Text>
+            </View>
           </View>
-          <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12, lineHeight: 17 }}>
-            Coordinates (3.8480° N, 11.5021° E) match the registered site boundaries in Odza, Yaoundé.
-          </Text>
         </Card>
 
         {/* Execution Notes & Deliverables Description */}
         <Card style={{ padding: 16, gap: 10 }}>
           <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-            Completion Notes & Technical Specs
+            {t('milestoneSubmit.completionNotesTitle')}
           </Text>
           <TextInput
-            placeholder="Describe work completed, curing times, materials used, and readiness for inspection..."
+            placeholder={t('milestoneSubmit.notesPlaceholder')}
             placeholderTextColor={colors.inkSubtle}
             value={notes}
             onChangeText={setNotes}
@@ -235,20 +340,55 @@ export function MilestoneSubmitScreen() {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 4 }}>
           <ShieldCheck size={20} color={colors.forest} />
           <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12, flex: 1, lineHeight: 17 }}>
-            Upon submission, the funder and independent field verifiers review the proof to trigger immediate escrow release to your account.
+            {t('milestoneSubmit.escrowInfo')}
           </Text>
         </View>
 
-        {/* Submit Button */}
-        <PillButton
-          variant="primary"
-          onPress={handleSubmit}
-          loading={evidenceMutation.isPending}
-          disabled={evidenceMutation.isPending}
-          fullWidth
-        >
-          Submit Evidence for Escrow Release
-        </PillButton>
+        {queuedForSync || existingQueued.length > 0 ? (
+          <Card style={{ padding: 16, gap: 10, backgroundColor: colors.amber + '15', borderColor: colors.amber + '40' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <WifiOff size={18} color={colors.amber} />
+              <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 15 }}>{t('milestoneSubmit.savedOnDevice')}</Text>
+            </View>
+            <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12, lineHeight: 17 }}>
+              {existingQueued.length} {existingQueued.length === 1 ? t('milestoneSubmit.photo') : t('milestoneSubmit.photos')} {t('milestoneSubmit.queuedDesc')}
+            </Text>
+            {isOnline && (
+              <PillButton variant="ghost" onPress={syncNow} loading={isSyncing} disabled={isSyncing} fullWidth>
+                {isSyncing ? t('milestoneSubmit.syncing') : t('milestoneSubmit.syncNow')}
+              </PillButton>
+            )}
+            <PillButton variant="primary" onPress={() => navigation.goBack()} fullWidth>
+              {t('milestoneSubmit.backToProject')}
+            </PillButton>
+          </Card>
+        ) : (
+          <>
+            {!isOnline && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: 12, backgroundColor: colors.amber + '15' }}>
+                <WifiOff size={16} color={colors.amber} />
+                <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 11, flex: 1, lineHeight: 15 }}>
+                  {t('milestoneSubmit.offlineWillUpload')}
+                </Text>
+              </View>
+            )}
+
+            {/* Submit Button */}
+            <PillButton
+              variant="primary"
+              onPress={handleSubmit}
+              loading={evidenceMutation.isPending}
+              disabled={evidenceMutation.isPending || !targetMilestone || photos.length < MIN_PHOTOS}
+              fullWidth
+            >
+              {photos.length < MIN_PHOTOS
+                ? `${t('milestoneSubmit.addMorePhoto')} ${MIN_PHOTOS - photos.length} ${MIN_PHOTOS - photos.length === 1 ? t('milestoneSubmit.morePhoto') : t('milestoneSubmit.morePhotos')}`
+                : isOnline
+                  ? t('milestoneSubmit.submitForRelease')
+                  : t('milestoneSubmit.saveForSync')}
+            </PillButton>
+          </>
+        )}
       </View>
     </Screen>
   );

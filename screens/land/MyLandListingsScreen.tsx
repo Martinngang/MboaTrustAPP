@@ -23,35 +23,61 @@ import { useToast } from '../../components/Toast';
 import { fmt } from '../../components/fmt';
 import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
-import {
-  useLandListingsQuery,
-  useLandOffersQuery,
-  useAcceptLandOfferMutation,
-  type LandOffer,
-} from '../../api/land';
+import { useLandListingsQuery } from '../../api/land';
+import { useLandOffersQuery, useAcceptOfferMutation, useDeclineOfferMutation } from '../../api/landOffers';
+import { apiErrorMessage } from '../../api/client';
+import { useApp } from '../../context/AppContext';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export function MyLandListingsScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { show: showToast } = useToast();
+  const { user } = useApp();
 
   const [activeTab, setActiveTab] = useState<'listings' | 'offers'>('listings');
 
-  const { data: listings, isLoading: isLoadingListings } = useLandListingsQuery();
+  // Scoped to this seller's own plots — the endpoint returns every listing
+  // on the platform when called with no filter (it's also the public
+  // marketplace's own query, see LandBrowseScreen), so this used to show
+  // everyone's land, not just the current user's.
+  const { data: listings, isLoading: isLoadingListings } = useLandListingsQuery({ sellerId: user?._id });
   const { data: offers, isLoading: isLoadingOffers } = useLandOffersQuery();
-  const acceptOfferMutation = useAcceptLandOfferMutation();
+  const acceptOfferMutation = useAcceptOfferMutation();
+  const declineOfferMutation = useDeclineOfferMutation();
+
+  // The real LandOffer only carries listingId — its title/asking price are
+  // looked up from the listings already loaded on this same screen, rather
+  // than inventing display fields the backend doesn't return.
+  const listingById = new Map((listings || []).map((l) => [l.id, l]));
+  // /land-offers with no filter returns every offer the caller is party to,
+  // as buyer OR seller — this screen is "my listings", so "Incoming Offers"
+  // means seller-side only. Without this, an offer the current user made as
+  // a *buyer* on someone else's plot would show up here too, with
+  // Accept/Decline buttons that hit seller-only endpoints.
+  const incomingOffers = (offers || []).filter((o) => listingById.has(o.listingId));
 
   const handleAcceptOffer = async (offerId: string, buyerName: string, amount: number) => {
     try {
       await acceptOfferMutation.mutateAsync(offerId);
       showToast({
-        title: 'Offer Accepted!',
-        description: `Accepted ${fmt(amount)} from ${buyerName}. Notary escrow protocol initiated.`,
+        title: t('myLandListings.offerAccepted'),
+        description: `${t('myLandListings.acceptedFrom')} ${fmt(amount)} ${t('myLandListings.fromBuyer')} ${buyerName}. ${t('myLandListings.fundingProjectCreated')}`,
         tone: 'success',
       });
-    } catch (err: any) {
-      showToast({ title: 'Error', description: err?.message || 'Could not accept offer.', tone: 'error' });
+    } catch (err) {
+      showToast({ title: t('myLandListings.error'), description: apiErrorMessage(err, t('myLandListings.couldNotAccept')), tone: 'error' });
+    }
+  };
+
+  const handleDeclineOffer = async (offerId: string) => {
+    try {
+      await declineOfferMutation.mutateAsync(offerId);
+      showToast({ title: t('myLandListings.offerDeclined'), description: t('myLandListings.buyerNotified'), tone: 'neutral' });
+    } catch (err) {
+      showToast({ title: t('myLandListings.error'), description: apiErrorMessage(err, t('myLandListings.couldNotDecline')), tone: 'error' });
     }
   };
 
@@ -59,8 +85,8 @@ export function MyLandListingsScreen() {
     <Screen
       header={
         <Header
-          title="Land Seller Workspace"
-          subtitle="Manage listings & purchase offers"
+          title={t('myLandListings.title')}
+          subtitle={t('myLandListings.subtitle')}
           back
           action={
             <Pressable
@@ -77,7 +103,7 @@ export function MyLandListingsScreen() {
             >
               <Plus size={14} color="#fff" strokeWidth={2.5} />
               <Text style={{ fontFamily: FONT.sansSemiBold, color: '#fff', fontSize: 12 }}>
-                List Land
+                {t('myLandListings.listLand')}
               </Text>
             </Pressable>
           }
@@ -88,8 +114,8 @@ export function MyLandListingsScreen() {
         {/* Filter Tabs */}
         <View style={{ flexDirection: 'row', gap: 8 }}>
           {[
-            { id: 'listings', label: `My Plots (${listings?.length || 3})` },
-            { id: 'offers', label: `Incoming Offers (${offers?.length || 1})` },
+            { id: 'listings', label: `${t('myLandListings.myPlots')} (${listings?.length ?? 0})` },
+            { id: 'offers', label: `${t('myLandListings.incomingOffers')} (${incomingOffers.length})` },
           ].map((tab) => {
             const active = activeTab === tab.id;
             return (
@@ -130,8 +156,8 @@ export function MyLandListingsScreen() {
             ) : (listings || []).length === 0 ? (
               <EmptyState
                 icon={MapPin}
-                title="No plots listed yet"
-                description="Publish your land with verified Titre Foncier to receive diaspora purchase offers."
+                title={t('myLandListings.noPlotsListed')}
+                description={t('myLandListings.noPlotsDesc')}
               />
             ) : (
               (listings || []).map((land) => (
@@ -144,13 +170,13 @@ export function MyLandListingsScreen() {
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontFamily: FONT.mono, color: colors.forest, fontSize: 10, fontWeight: '700' }}>
-                          {land.titleNumber}
+                          {land.titleType}
                         </Text>
                         <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14, marginTop: 2 }}>
                           {land.title}
                         </Text>
                       </View>
-                      <StatusBadge status={land.status} />
+                      <StatusBadge status={land.verificationStatus} />
                     </View>
 
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -184,7 +210,7 @@ export function MyLandListingsScreen() {
                       </Text>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                         <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.seal, fontSize: 12 }}>
-                          Manage
+                          {t('myLandListings.manage')}
                         </Text>
                         <ArrowRight size={13} color={colors.seal} />
                       </View>
@@ -201,83 +227,90 @@ export function MyLandListingsScreen() {
           <View style={{ gap: 12 }}>
             {isLoadingOffers ? (
               <ActivityIndicator color={colors.seal} style={{ marginTop: 20 }} />
-            ) : (offers || []).length === 0 ? (
+            ) : incomingOffers.length === 0 ? (
               <EmptyState
                 icon={Tag}
-                title="No purchase offers yet"
-                description="Buyer escrow proposals will appear here."
+                title={t('myLandListings.noOffersYet')}
+                description={t('myLandListings.noOffersDesc')}
               />
             ) : (
-              (offers || []).map((offer) => (
-                <Card key={offer.id} style={{ padding: 16, gap: 12 }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 15 }}>
-                        {offer.buyerName}
-                      </Text>
-                      <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12, marginTop: 1 }}>
-                        Target: {offer.listingTitle}
-                      </Text>
-                    </View>
-                    <StatusBadge status={offer.status} />
-                  </View>
-
-                  <View style={{ backgroundColor: colors.parchment, borderRadius: 10, padding: 10, gap: 4 }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                      <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12 }}>Offered Price:</Text>
-                      <Text style={{ fontFamily: FONT.serifBold, color: colors.forest, fontSize: 15 }}>
-                        {fmt(offer.proposedPrice)}
-                      </Text>
-                    </View>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                      <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 11 }}>Asking Price:</Text>
-                      <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 11 }}>
-                        {fmt(offer.askingPrice)}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {offer.notes && (
-                    <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12 }}>
-                      "{offer.notes}"
-                    </Text>
-                  )}
-
-                  {offer.status === 'pending' && (
-                    <View style={{ flexDirection: 'row', gap: 8, paddingTop: 4 }}>
-                      <Pressable
-                        onPress={() => handleAcceptOffer(offer.id, offer.buyerName, offer.proposedPrice)}
-                        style={{
-                          flex: 1,
-                          backgroundColor: colors.forest,
-                          paddingVertical: 8,
-                          borderRadius: 10,
-                          alignItems: 'center',
-                        }}
-                      >
-                        <Text style={{ fontFamily: FONT.sansSemiBold, color: '#fff', fontSize: 12 }}>
-                          Accept & Escrow
+              incomingOffers.map((offer) => {
+                const listing = listingById.get(offer.listingId);
+                return (
+                  <Card key={offer.id} style={{ padding: 16, gap: 12 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 15 }}>
+                          {offer.buyerName}
                         </Text>
-                      </Pressable>
-
-                      <Pressable
-                        onPress={() => showToast({ title: 'Offer Declined', description: 'Buyer has been informed.', tone: 'neutral' })}
-                        style={{
-                          paddingHorizontal: 14,
-                          paddingVertical: 8,
-                          borderRadius: 10,
-                          backgroundColor: colors.parchment,
-                          alignItems: 'center',
-                        }}
-                      >
-                        <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.inkMuted, fontSize: 12 }}>
-                          Decline
+                        <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12, marginTop: 1 }}>
+                          {t('myLandListings.target')} {listing?.title ?? t('myLandListings.listingFallback')}
                         </Text>
-                      </Pressable>
+                      </View>
+                      <StatusBadge status={offer.status} />
                     </View>
-                  )}
-                </Card>
-              ))
+
+                    <View style={{ backgroundColor: colors.parchment, borderRadius: 10, padding: 10, gap: 4 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12 }}>{t('myLandListings.offeredPrice')}</Text>
+                        <Text style={{ fontFamily: FONT.serifBold, color: colors.forest, fontSize: 15 }}>
+                          {fmt(offer.amount)}
+                        </Text>
+                      </View>
+                      {listing && (
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                          <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 11 }}>{t('myLandListings.askingPrice')}</Text>
+                          <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 11 }}>
+                            {fmt(listing.price)}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {offer.message && (
+                      <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12 }}>
+                        "{offer.message}"
+                      </Text>
+                    )}
+
+                    {offer.status === 'pending' && (
+                      <View style={{ flexDirection: 'row', gap: 8, paddingTop: 4 }}>
+                        <Pressable
+                          onPress={() => handleAcceptOffer(offer.id, offer.buyerName, offer.amount)}
+                          disabled={acceptOfferMutation.isPending || declineOfferMutation.isPending}
+                          style={{
+                            flex: 1,
+                            backgroundColor: colors.forest,
+                            paddingVertical: 8,
+                            borderRadius: 10,
+                            alignItems: 'center',
+                          }}
+                        >
+                          <Text style={{ fontFamily: FONT.sansSemiBold, color: '#fff', fontSize: 12 }}>
+                            {t('myLandListings.accept')}
+                          </Text>
+                        </Pressable>
+
+                        <Pressable
+                          onPress={() => handleDeclineOffer(offer.id)}
+                          disabled={acceptOfferMutation.isPending || declineOfferMutation.isPending}
+                          style={{
+                            paddingHorizontal: 14,
+                            paddingVertical: 8,
+                            borderRadius: 10,
+                            backgroundColor: colors.parchment,
+                            alignItems: 'center',
+                          }}
+                        >
+                          <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.inkMuted, fontSize: 12 }}>
+                            {t('myLandListings.decline')}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    )}
+                  </Card>
+                );
+              })
             )}
           </View>
         )}

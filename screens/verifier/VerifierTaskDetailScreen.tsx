@@ -23,17 +23,16 @@ import { useToast } from '../../components/Toast';
 import { fmt } from '../../components/fmt';
 import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
-import {
-  useVerificationTasksQuery,
-  useStartVerificationTaskMutation,
-  type VerificationTask,
-} from '../../api/verifier';
+import { useVerificationTasksQuery, useStartVerificationTaskMutation } from '../../api/verifier';
+import { apiErrorMessage } from '../../api/client';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
 
 type RouteProps = RouteProp<MainStackParamList, 'VerifierTaskDetail'>;
 
 export function VerifierTaskDetailScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const route = useRoute<RouteProps>();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { show: showToast } = useToast();
@@ -42,11 +41,11 @@ export function VerifierTaskDetailScreen() {
   const { data: tasks, isLoading } = useVerificationTasksQuery();
   const startMutation = useStartVerificationTaskMutation();
 
-  const task = (tasks || []).find((t) => t.id === taskId) || (tasks || [])[0];
+  const task = (tasks || []).find((tk) => tk.id === taskId) || (tasks || [])[0];
 
   if (isLoading || !task) {
     return (
-      <Screen header={<Header title="Audit Assignment" back />}>
+      <Screen header={<Header title={t('verifierTaskDetail.title')} back />}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60 }}>
           <ActivityIndicator color={colors.forest} />
         </View>
@@ -58,102 +57,61 @@ export function VerifierTaskDetailScreen() {
     try {
       await startMutation.mutateAsync(task.id);
       showToast({
-        title: 'Audit In Progress',
-        description: 'Site inspection initiated. You can now submit your report.',
+        title: t('verifierTaskDetail.auditInProgress'),
+        description: t('verifierTaskDetail.siteInspectionInitiated'),
         tone: 'success',
       });
-    } catch (err: any) {
-      showToast({ title: 'Error', description: err?.message || 'Could not start audit.', tone: 'error' });
+    } catch (err) {
+      showToast({ title: t('verifierTaskDetail.error'), description: apiErrorMessage(err, t('verifierTaskDetail.couldNotStartAudit')), tone: 'error' });
     }
   };
 
   const checklistItems = [
-    { title: 'Excavation & Depth Measurement', detail: 'Verify trench depth reaches ≥ 1.5m into solid substrate.' },
-    { title: 'Steel Rebar Reinforcement', detail: 'Inspect 12mm main bars, 8mm stirrup spacing, and tie wire integrity.' },
-    { title: 'Concrete Pour Quality', detail: 'Verify aggregate ratio, slump test consistency, and curing.' },
-    { title: 'On-Site GPS Geotag Confirmation', detail: 'Confirm coordinates match registered cadastral plot boundaries.' },
+    { title: t('verifierTaskDetail.checklistItem1Title'), detail: t('verifierTaskDetail.checklistItem1Detail') },
+    { title: t('verifierTaskDetail.checklistItem2Title'), detail: t('verifierTaskDetail.checklistItem2Detail') },
+    { title: t('verifierTaskDetail.checklistItem3Title'), detail: t('verifierTaskDetail.checklistItem3Detail') },
+    { title: t('verifierTaskDetail.checklistItem4Title'), detail: t('verifierTaskDetail.checklistItem4Detail') },
   ];
 
   return (
-    <Screen header={<Header title="Inspection Task" subtitle={task.projectTitle} back />}>
+    <Screen header={<Header title={t('verifierTaskDetail.inspectionTask')} subtitle={task.projectTitle} back />}>
       <View style={{ padding: 16, gap: 18 }}>
         {/* Task Header Card */}
         <Card style={{ padding: 16, gap: 12 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <View style={{ flex: 1 }}>
               <Text style={{ fontFamily: FONT.mono, color: colors.forest, fontSize: 10, textTransform: 'uppercase', fontWeight: '700' }}>
-                {task.targetType === 'land_listing' ? 'Cadastral Audit' : 'Milestone Verification'}
+                {task.targetType === 'land_listing' ? t('verifierTaskDetail.cadastralAudit') : t('verifierTaskDetail.milestoneVerification')}
               </Text>
               <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 18, marginTop: 2 }}>
                 {task.projectTitle}
               </Text>
               {task.milestoneTitle ? (
                 <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12, marginTop: 1 }}>
-                  Tranche: {task.milestoneTitle}
+                  {t('verifierTaskDetail.tranche')} {task.milestoneTitle}
                 </Text>
               ) : null}
             </View>
             <StatusBadge status={task.status} />
           </View>
 
-          {/* Location & GPS */}
-          <View style={{ backgroundColor: colors.parchment, borderRadius: 12, padding: 12, gap: 6 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <MapPin size={14} color={colors.forest} />
-              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>
-                {task.location}
-              </Text>
+          {/* Location */}
+          {task.location ? (
+            <View style={{ backgroundColor: colors.parchment, borderRadius: 12, padding: 12, gap: 6 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <MapPin size={14} color={colors.forest} />
+                <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>
+                  {task.location}
+                </Text>
+              </View>
             </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Compass size={13} color={colors.inkSubtle} />
-              <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 11 }}>
-                Coordinates: {task.coordinates.lat}° N, {task.coordinates.lng}° E
-              </Text>
-            </View>
-          </View>
-
-          {/* Bounty Fee */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 6 }}>
-            <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12 }}>
-              Inspector Bounty Fee (Escrow Guaranteed):
-            </Text>
-            <Text style={{ fontFamily: FONT.serifBold, color: colors.forest, fontSize: 16 }}>
-              {fmt(task.bountyFee)}
-            </Text>
-          </View>
+          ) : null}
         </Card>
-
-        {/* Contractor's Submitted Evidence to Inspect */}
-        {task.contractorEvidence && (
-          <Card style={{ padding: 16, gap: 12 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Camera size={16} color={colors.ink} />
-              <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-                Contractor Submitted Proof
-              </Text>
-            </View>
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-              {task.contractorEvidence.photos.map((uri, idx) => (
-                <Image
-                  key={idx}
-                  source={{ uri }}
-                  style={{ width: 140, height: 100, borderRadius: 10, backgroundColor: colors.parchment }}
-                  resizeMode="cover"
-                />
-              ))}
-            </ScrollView>
-
-            <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12, lineHeight: 17 }}>
-              "{task.contractorEvidence.notes}"
-            </Text>
-          </Card>
-        )}
 
         {/* Inspection Verification Checklist */}
         <Card style={{ padding: 16, gap: 12 }}>
           <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.5 }}>
-            Expert Verification Standards
+            {t('verifierTaskDetail.expertStandards')}
           </Text>
 
           <View style={{ gap: 10 }}>
@@ -188,20 +146,27 @@ export function VerifierTaskDetailScreen() {
         </Card>
 
         {/* Submitted Report Review (if completed) */}
-        {task.report && (
+        {task.status === 'submitted' && (
           <Card style={{ padding: 16, gap: 10, backgroundColor: colors.forest + '12', borderColor: colors.forest + '30' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <CheckCircle2 size={16} color={colors.forest} />
               <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forest, fontSize: 14 }}>
-                Report Submitted & Signed
+                {t('verifierTaskDetail.reportSubmittedSigned')}
               </Text>
             </View>
             <Text style={{ fontFamily: FONT.sans, color: colors.ink, fontSize: 13, lineHeight: 18 }}>
-              {task.report.reportText}
+              {task.reportText}
             </Text>
             <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 11 }}>
-              Verdict: {task.report.confirmedMatch ? 'PASSED & APPROVED' : 'FLAGGED DEFECT'} · {task.report.submittedAt}
+              {t('verifierTaskDetail.verdictLabel')} {task.confirmedMatch ? t('verifierTaskDetail.passedApproved') : t('verifierTaskDetail.flaggedDefect')}
             </Text>
+            {task.reportPhotos.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                {task.reportPhotos.map((uri, idx) => (
+                  <Image key={idx} source={{ uri }} style={{ width: 140, height: 100, borderRadius: 10, backgroundColor: colors.parchment }} resizeMode="cover" />
+                ))}
+              </ScrollView>
+            )}
           </Card>
         )}
 
@@ -215,7 +180,7 @@ export function VerifierTaskDetailScreen() {
               disabled={startMutation.isPending}
               fullWidth
             >
-              Accept & Begin On-Site Audit
+              {t('verifierTaskDetail.acceptAndBegin')}
             </PillButton>
           )}
 
@@ -226,12 +191,12 @@ export function VerifierTaskDetailScreen() {
                 navigation.navigate('VerifierSubmitReport', {
                   taskId: task.id,
                   projectTitle: task.projectTitle,
-                  milestoneTitle: task.milestoneTitle || 'Milestone Verification',
+                  milestoneTitle: task.milestoneTitle || t('verifierSubmitReport.milestoneVerificationFallback'),
                 })
               }
               fullWidth
             >
-              Submit Inspection Report & Verdict
+              {t('verifierTaskDetail.submitReportAndVerdict')}
             </PillButton>
           )}
 
@@ -249,7 +214,7 @@ export function VerifierTaskDetailScreen() {
             >
               <ShieldCheck size={16} color={colors.forest} />
               <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forest, fontSize: 13 }}>
-                Audit Completed · Bounty Settled
+                {t('verifierTaskDetail.auditCompleted')}
               </Text>
             </View>
           )}

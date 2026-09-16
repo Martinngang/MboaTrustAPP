@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { View, Text, Pressable, TextInput, ScrollView, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -21,9 +21,11 @@ import { useToast } from '../../components/Toast';
 import { fmt } from '../../components/fmt';
 import { useTheme } from '../../theme/ThemeProvider';
 import { FONT } from '../../theme/tokens';
-import { useCreateLandListingMutation } from '../../api/land';
+import { useCreateLandListingMutation, useAddLandDocumentMutation, type PickedDocument } from '../../api/land';
+import { apiErrorMessage } from '../../api/client';
 import { AIDeedScanner } from '../../components/AIDeedScanner';
 import type { MainStackParamList } from '../../navigation/types';
+import { useTranslation } from '../../i18n/useTranslation';
 
 const REGIONS = ['Centre', 'Littoral', 'Sud', 'Ouest', 'Sud-Ouest', 'Nord-Ouest'];
 const FEATURES_LIST = [
@@ -38,28 +40,32 @@ const FEATURES_LIST = [
 
 export function CreateListingScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { show: showToast } = useToast();
   const createMutation = useCreateLandListingMutation();
+  const addDocumentMutation = useAddLandDocumentMutation();
+  const [deedPhoto, setDeedPhoto] = useState<PickedDocument | null>(null);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
-  // Form State
+  // Form State — starts empty (placeholder text only guides the shape of a
+  // real answer); this used to pre-fill every field with one specific fake
+  // listing's data, so publishing without editing anything would have
+  // listed that fake plot as the user's own real property.
   const [title, setTitle] = useState('');
-  const [region, setRegion] = useState('Sud');
-  const [city, setCity] = useState('Kribi');
-  const [neighborhood, setNeighborhood] = useState('Ngoye Plage');
-  const [sizeSqm, setSizeSqm] = useState('1200');
-  const [price, setPrice] = useState('18000000');
-  const [titleNumber, setTitleNumber] = useState('TF #8812/Oce');
-  const [description, setDescription] = useState(
-    'Prime build-ready parcel located close to the coast with complete cadastral boundary markers and direct road access.'
-  );
-  const [selectedFeatures, setSelectedFeatures] = useState<string[]>([
-    'Direct Road Access',
-    'Electricity Grid Connected',
-    'Cadastral Marker Posts Placed',
-  ]);
+  const [region, setRegion] = useState('Centre');
+  const [city, setCity] = useState('');
+  const [neighborhood, setNeighborhood] = useState('');
+  const [sizeSqm, setSizeSqm] = useState('');
+  const [price, setPrice] = useState('');
+  const [titleNumber, setTitleNumber] = useState('');
+  const [description, setDescription] = useState('');
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
+  const cityRef = useRef<TextInput>(null);
+  const neighborhoodRef = useRef<TextInput>(null);
+  const sizeSqmRef = useRef<TextInput>(null);
+  const priceRef = useRef<TextInput>(null);
 
   const numPrice = Number(price) || 0;
   const numSize = Number(sizeSqm) || 1;
@@ -74,17 +80,17 @@ export function CreateListingScreen() {
   const handleNext = () => {
     if (step === 1) {
       if (!title.trim() || !city.trim()) {
-        showToast({ title: 'Missing Information', description: 'Please enter listing title and city.', tone: 'error' });
+        showToast({ title: t('createListing.missingInformation'), description: t('createListing.enterTitleAndCity'), tone: 'error' });
         return;
       }
       setStep(2);
     } else if (step === 2) {
       if (numPrice <= 0 || numSize <= 0) {
-        showToast({ title: 'Invalid Numbers', description: 'Please enter a valid price and surface area.', tone: 'error' });
+        showToast({ title: t('createListing.invalidNumbers'), description: t('createListing.enterValidPriceAndSize'), tone: 'error' });
         return;
       }
       if (!titleNumber.trim()) {
-        showToast({ title: 'Title Deed Required', description: 'Please provide the Titre Foncier cadastral number.', tone: 'error' });
+        showToast({ title: t('createListing.titleDeedRequired'), description: t('createListing.enterCadastralNumber'), tone: 'error' });
         return;
       }
       setStep(3);
@@ -94,28 +100,43 @@ export function CreateListingScreen() {
   };
 
   const submitListing = async () => {
+    // The real backend's LandListing has no neighborhood/titleNumber/
+    // features fields — only title/region/city/sizeSqm/price/titleType/
+    // description. Rather than silently dropping what the user entered,
+    // it's folded into the description, the one free-text field a buyer
+    // actually reads.
+    const detailLines = [
+      description.trim(),
+      neighborhood.trim() ? `Neighborhood: ${neighborhood.trim()}` : '',
+      titleNumber.trim() ? `Title deed number: ${titleNumber.trim()}` : '',
+      selectedFeatures.length > 0 ? `Features: ${selectedFeatures.join(', ')}` : '',
+    ].filter(Boolean);
+
     try {
-      await createMutation.mutateAsync({
+      const listing = await createMutation.mutateAsync({
         title: title.trim(),
         region,
         city: city.trim(),
-        neighborhood: neighborhood.trim(),
         price: numPrice,
         sizeSqm: numSize,
         titleType: 'titre_foncier',
-        titleNumber: titleNumber.trim(),
-        description: description.trim(),
-        features: selectedFeatures,
+        description: detailLines.join('\n\n'),
       });
 
+      // Best-effort — the listing itself is already real and published;
+      // failing to attach the scanned deed photo shouldn't block that.
+      if (deedPhoto) {
+        await addDocumentMutation.mutateAsync({ listingId: listing.id, file: deedPhoto, type: 'titre_foncier' }).catch(() => {});
+      }
+
       showToast({
-        title: 'Listing Published!',
-        description: 'Your verified land plot is now live on the marketplace.',
+        title: t('createListing.listingPublished'),
+        description: t('createListing.livePendingVerification'),
         tone: 'success',
       });
       navigation.goBack();
-    } catch (err: any) {
-      showToast({ title: 'Error', description: err?.message || 'Could not publish listing.', tone: 'error' });
+    } catch (err) {
+      showToast({ title: t('createListing.error'), description: apiErrorMessage(err, t('createListing.couldNotPublish')), tone: 'error' });
     }
   };
 
@@ -123,7 +144,7 @@ export function CreateListingScreen() {
     <Screen
       header={
         <Header
-          title="List Land on Marketplace"
+          title={t('createListing.title')}
           back
           onBack={() => (step > 1 ? setStep((s) => (s - 1) as any) : navigation.goBack())}
         />
@@ -133,9 +154,9 @@ export function CreateListingScreen() {
         {/* Step Indicator */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           {[
-            { num: 1, label: 'Location' },
-            { num: 2, label: 'Title & Price' },
-            { num: 3, label: 'Features & Publish' },
+            { num: 1, label: t('createListing.stepLocation') },
+            { num: 2, label: t('createListing.stepTitlePrice') },
+            { num: 3, label: t('createListing.stepFeaturesPublish') },
           ].map((s, idx) => (
             <View key={s.num} style={{ flexDirection: 'row', alignItems: 'center', flex: idx < 2 ? 1 : undefined }}>
               <View
@@ -175,23 +196,26 @@ export function CreateListingScreen() {
           <View style={{ gap: 16 }}>
             <View>
               <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 18 }}>
-                Step 1: Parcel Location
+                {t('createListing.step1Title')}
               </Text>
               <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12, marginTop: 2 }}>
-                Enter the geographical location of the land plot
+                {t('createListing.step1Sub')}
               </Text>
             </View>
 
             <Card style={{ padding: 16, gap: 14 }}>
               <TextField
-                label="Listing Title"
+                label={t('createListing.listingTitleLabel')}
                 placeholder="e.g. 1,200 m² Sea View Plot in Kribi"
                 value={title}
                 onChangeText={setTitle}
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => cityRef.current?.focus()}
               />
 
               <View style={{ gap: 6 }}>
-                <Text style={{ fontFamily: FONT.sansMedium, color: colors.ink, fontSize: 13 }}>Region</Text>
+                <Text style={{ fontFamily: FONT.sansMedium, color: colors.ink, fontSize: 13 }}>{t('createListing.regionLabel')}</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
                   {REGIONS.map((r) => {
                     const active = region === r;
@@ -216,17 +240,25 @@ export function CreateListingScreen() {
               </View>
 
               <TextField
-                label="City / Municipality"
+                ref={cityRef}
+                label={t('createListing.cityLabel')}
                 placeholder="e.g. Kribi, Yaoundé, Douala"
                 value={city}
                 onChangeText={setCity}
+                autoCapitalize="words"
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => neighborhoodRef.current?.focus()}
               />
 
               <TextField
-                label="Quarter / Neighborhood"
+                ref={neighborhoodRef}
+                label={t('createListing.neighborhoodLabel')}
                 placeholder="e.g. Ngoye Plage, Odza"
                 value={neighborhood}
                 onChangeText={setNeighborhood}
+                autoCapitalize="words"
+                returnKeyType="done"
               />
             </Card>
           </View>
@@ -237,10 +269,10 @@ export function CreateListingScreen() {
           <View style={{ gap: 16 }}>
             <View>
               <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 18 }}>
-                Step 2: Cadastral Deed & Pricing
+                {t('createListing.step2Title')}
               </Text>
               <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12, marginTop: 2 }}>
-                Specify cadastral title deed number and financial terms
+                {t('createListing.step2Sub')}
               </Text>
             </View>
 
@@ -250,50 +282,61 @@ export function CreateListingScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <FileCheck size={16} color={colors.forest} />
                   <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-                    AI Title Deed Scanner
+                    {t('createListing.aiScannerTitle')}
                   </Text>
                   <View style={{ paddingHorizontal: 7, paddingVertical: 2, backgroundColor: colors.forest + '18', borderRadius: 8 }}>
                     <Text style={{ fontFamily: FONT.mono, color: colors.forest, fontSize: 9, textTransform: 'uppercase', letterSpacing: 1 }}>Gemini AI</Text>
                   </View>
                 </View>
                 <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12 }}>
-                  Upload your Titre Foncier — AI will extract the title number, plot area, beacons, and check authenticity.
+                  {t('createListing.aiScannerDesc')}
                 </Text>
                 <AIDeedScanner
+                  onFileSelected={(uri, _base64, mimeType) => setDeedPhoto({ uri, mimeType, fileName: 'deed.jpg' })}
                   onScanComplete={(result) => {
                     if (result.titleNumber) setTitleNumber(result.titleNumber);
                     if (result.plotAreaSqm) setSizeSqm(String(Math.round(result.plotAreaSqm)));
                     if (result.authenticityScore < 50) {
-                      showToast({ title: 'Low Authenticity Score', description: 'The AI flagged this deed. Please verify it manually.', tone: 'error' });
+                      showToast({ title: t('createListing.lowAuthenticityScore'), description: t('createListing.aiFlaggedDeed'), tone: 'error' });
                     }
                   }}
                 />
               </View>
 
               <TextField
-                label="Titre Foncier (Cadastral Title Number)"
+                label={t('createListing.titleNumberLabel')}
                 placeholder="e.g. TF #8812/Oce — auto-filled by AI scanner"
                 value={titleNumber}
                 onChangeText={setTitleNumber}
+                autoCapitalize="characters"
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => sizeSqmRef.current?.focus()}
               />
 
               <View style={{ flexDirection: 'row', gap: 12 }}>
                 <View style={{ flex: 1 }}>
                   <TextField
-                    label="Surface Area (m²)"
+                    ref={sizeSqmRef}
+                    label={t('createListing.surfaceAreaLabel')}
                     placeholder="1200"
                     value={sizeSqm}
                     onChangeText={(v) => setSizeSqm(v.replace(/[^0-9]/g, ''))}
                     keyboardType="numeric"
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    onSubmitEditing={() => priceRef.current?.focus()}
                   />
                 </View>
                 <View style={{ flex: 1 }}>
                   <TextField
-                    label="Total Asking Price (XAF)"
+                    ref={priceRef}
+                    label={t('createListing.askingPriceLabel')}
                     placeholder="18000000"
                     value={price}
                     onChangeText={(v) => setPrice(v.replace(/[^0-9]/g, ''))}
                     keyboardType="numeric"
+                    returnKeyType="done"
                   />
                 </View>
               </View>
@@ -310,7 +353,7 @@ export function CreateListingScreen() {
                 }}
               >
                 <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 13 }}>
-                  Calculated Price per m²:
+                  {t('createListing.calculatedPricePerSqm')}
                 </Text>
                 <Text style={{ fontFamily: FONT.serifBold, color: colors.forest, fontSize: 16 }}>
                   {fmt(pricePerSqm)} / m²
@@ -325,16 +368,16 @@ export function CreateListingScreen() {
           <View style={{ gap: 16 }}>
             <View>
               <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 18 }}>
-                Step 3: Parcel Features & Specs
+                {t('createListing.step3Title')}
               </Text>
               <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 12, marginTop: 2 }}>
-                Select land amenities and enter description
+                {t('createListing.step3Sub')}
               </Text>
             </View>
 
             <Card style={{ padding: 16, gap: 12 }}>
               <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 14 }}>
-                Parcel Features
+                {t('createListing.parcelFeatures')}
               </Text>
 
               <View style={{ gap: 8 }}>
@@ -378,8 +421,8 @@ export function CreateListingScreen() {
               </View>
 
               <TextField
-                label="Description & Topography"
-                placeholder="Access details, neighborhood development, terrain characteristics..."
+                label={t('createListing.descriptionLabel')}
+                placeholder={t('createListing.descriptionPlaceholder')}
                 value={description}
                 onChangeText={setDescription}
                 multiline
@@ -391,11 +434,11 @@ export function CreateListingScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <ShieldCheck size={16} color={colors.forest} />
                 <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forest, fontSize: 13 }}>
-                  Notary Escrow Protection Guaranteed
+                  {t('createListing.notaryProtectionTitle')}
                 </Text>
               </View>
               <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 11, lineHeight: 16 }}>
-                Buyer purchase payments will be locked in escrow and released directly to your account upon verified notary deed registration.
+                {t('createListing.notaryProtectionDesc')}
               </Text>
             </Card>
           </View>
@@ -409,7 +452,7 @@ export function CreateListingScreen() {
           disabled={createMutation.isPending}
           fullWidth
         >
-          {step === 3 ? 'Publish Land Listing' : 'Continue to Next Step'}
+          {step === 3 ? t('createListing.publishButton') : t('createListing.continueButton')}
         </PillButton>
       </View>
     </Screen>

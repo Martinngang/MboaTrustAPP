@@ -1,80 +1,62 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 
-export interface KycRecord {
-  id: string;
-  status: 'not_submitted' | 'pending' | 'verified' | 'rejected';
-  documentType: 'cni' | 'passport' | 'residence_permit';
-  documentNumber: string;
-  documentFrontUrl?: string;
-  selfieUrl?: string;
-  country: string;
-  submittedAt?: string;
-  verifiedAt?: string;
-}
+export type KycStatus = 'unverified' | 'pending' | 'verified' | 'rejected';
 
-export function useKycStatusQuery() {
+/** Transactions above this amount are blocked pending identity verification.
+ * Client-side gate only — the backend has no matching server-side threshold
+ * to sync to. */
+export const KYC_LARGE_TXN_THRESHOLD = 1000000;
+
+/** Real account state (User.kycStatus) — no separate KYC-case model on the
+ * backend, and no admin review step: verification runs synchronously
+ * against Smile Identity inside POST /kyc/verify and the result is written
+ * straight onto the user. */
+export function useMyKycStatusQuery() {
   return useQuery({
-    queryKey: ['kyc-status', 'me'],
-    queryFn: async (): Promise<KycRecord> => {
-      try {
-        const { data } = await api.get<{ data: any }>('/kyc/me');
-        if (data.data) {
-          return {
-            id: data.data._id || 'kyc-1',
-            status: data.data.status || 'verified',
-            documentType: data.data.documentType || 'cni',
-            documentNumber: data.data.documentNumber || 'CNI-10293847',
-            documentFrontUrl: data.data.documentFrontUrl,
-            selfieUrl: data.data.selfieUrl,
-            country: data.data.country || 'Cameroon',
-            submittedAt: data.data.submittedAt || '2026-08-15',
-            verifiedAt: data.data.verifiedAt || '2026-08-16',
-          };
-        }
-        return {
-          id: 'kyc-1',
-          status: 'verified',
-          documentType: 'cni',
-          documentNumber: 'CNI-10293847',
-          country: 'Cameroon',
-          submittedAt: '2026-08-15',
-          verifiedAt: '2026-08-16',
-        };
-      } catch {
-        return {
-          id: 'kyc-1',
-          status: 'verified',
-          documentType: 'cni',
-          documentNumber: 'CNI-10293847',
-          country: 'Cameroon',
-          submittedAt: '2026-08-15',
-          verifiedAt: '2026-08-16',
-        };
-      }
+    queryKey: ['me', 'kycStatus'],
+    queryFn: async (): Promise<KycStatus> => {
+      const { data } = await api.get<{ data: { kycStatus: KycStatus } }>('/users/me');
+      return data.data.kycStatus;
     },
-    staleTime: 30_000,
+    staleTime: 10_000,
   });
 }
 
-export interface SubmitKycInput {
-  documentType: string;
-  documentNumber: string;
-  country: string;
-  documentFrontUrl: string;
-  selfieUrl: string;
+export function useUploadKycDocumentMutation() {
+  return useMutation({
+    mutationFn: async (file: { uri: string; fileName?: string | null; mimeType?: string | null }): Promise<string> => {
+      const form = new FormData();
+      form.append('file', {
+        uri: file.uri,
+        name: file.fileName ?? 'document.jpg',
+        type: file.mimeType ?? 'image/jpeg',
+      } as unknown as Blob);
+      const { data } = await api.post<{ data: { url: string } }>('/users/me/documents', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return data.data.url;
+    },
+  });
 }
 
+export interface KycResult {
+  verified: boolean;
+  resultText: string | null;
+  confidenceValue: string | null;
+}
+
+/** Two real steps, not three — the backend's Smile Identity Basic KYC job
+ * verifies an ID number against the issuing authority's records; it has no
+ * selfie/facial-match capability, so that step doesn't correspond to
+ * anything the backend can actually check. */
 export function useSubmitKycMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: SubmitKycInput) => {
-      const { data } = await api.post('/kyc/submit', input);
-      return data;
+    mutationFn: async (input: { idType: string; idNumber: string; country?: string; documentUrl?: string }): Promise<KycResult> => {
+      const { data } = await api.post<{ data: { user: unknown; kycResult: KycResult } }>('/kyc/verify', input);
+      return data.data.kycResult;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['kyc-status'] });
-      qc.invalidateQueries({ queryKey: ['session'] });
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me', 'kycStatus'] }),
   });
 }

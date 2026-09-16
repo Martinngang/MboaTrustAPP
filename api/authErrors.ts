@@ -17,6 +17,8 @@ const MESSAGES: Record<string, string> = {
   'auth/operation-not-allowed': "This sign-in method isn't enabled yet for this app. Please try another method or contact support.",
   'auth/unauthorized-domain': "Sign-in isn't available from this address yet. Please contact support.",
   'auth/internal-error': 'Something went wrong on our end. Please try again in a moment.',
+  'auth/account-exists-with-different-credential': 'An account already exists with this email using a different sign-in method.',
+  'auth/credential-already-in-use': 'That sign-in method is already linked to another account.',
 };
 
 export function firebaseErrorCode(err: unknown): string | null {
@@ -31,4 +33,8 @@ export function friendlyAuthError(err: unknown, fallback = 'Something went wrong
   const code = firebaseErrorCode(err);
   if (code && MESSAGES[code]) return MESSAGES[code];
   return fallback;
+}
+
+export function isCredentialInUseError(err: unknown): boolean {
+  return firebaseErrorCode(err) === 'auth/credential-already-in-use';
 }
