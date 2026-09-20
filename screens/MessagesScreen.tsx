@@ -194,9 +194,16 @@ export function MessagesScreen() {
               <Avatar name={conv.withName} avatarUrl={conv.avatarUrl} isGroup={conv.isGroup} size={46} />
               <View style={{ flex: 1, gap: 2 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 14 }} numberOfLines={1}>
-                    {conv.withName}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
+                    <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 14, flexShrink: 1 }} numberOfLines={1}>
+                      {conv.withName}
+                    </Text>
+                    {conv.isAdvisor && (
+                      <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: colors.amber }}>
+                        <Text style={{ fontFamily: FONT.mono, color: colors.forestDark, fontSize: 9, fontWeight: '700' }}>{t('chat.aiBadge')}</Text>
+                      </View>
+                    )}
+                  </View>
                   <Text style={{ fontFamily: FONT.mono, color: conv.unreadCount > 0 ? colors.forest : colors.inkSubtle, fontSize: 10 }}>
                     {relativeTime(conv.updatedAt, t)}
                   </Text>

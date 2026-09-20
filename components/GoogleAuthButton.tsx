@@ -37,18 +37,23 @@ export function GoogleAuthButton({
   const configured = Boolean(
     process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
   );
-  // On Expo's web target, useIdTokenAuthRequest resolves its clientId via
-  // Platform.select({..., default: 'webClientId'}) and throws synchronously
-  // (invariantClientId in expo-auth-session) if that's empty — before this
-  // component's own `if (!configured) return null` guard below ever runs,
-  // since hooks can't be called conditionally. Without Google credentials
-  // configured at all (the common case pre-launch), this crashed every
-  // screen rendering this button on web via the nearest ErrorBoundary. The
-  // placeholder is never reachable — `configured` still gates the actual
-  // button/promptAsync() below to real credentials only.
+  // useIdTokenAuthRequest resolves its clientId via Platform.select and throws
+  // synchronously (invariantClientId in expo-auth-session) if the one for the
+  // current platform is empty — before this component's own
+  // `if (!configured) return null` guard below ever runs, since hooks can't be
+  // called conditionally. Without Google credentials configured at all (the
+  // common case pre-launch), that crashes every screen rendering this button,
+  // via the nearest ErrorBoundary.
+  //
+  // All three need the placeholder, not just web: this was originally patched
+  // for webClientId alone, which left Android throwing
+  // "Client Id property `androidClientId` must be defined" the first time the
+  // app ran on a real device (it had only ever been exercised in the web
+  // preview until then). The placeholders are never reachable — `configured`
+  // above still gates the actual button/promptAsync() to real credentials only.
   const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
-    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
-    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || 'unconfigured',
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || 'unconfigured',
     webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || 'unconfigured',
   });
 

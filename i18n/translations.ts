@@ -476,6 +476,7 @@ export const translations = {
   'menu.logOut': { en: 'Log out', fr: 'Se déconnecter' },
   'menu.advisor': { en: 'Your dedicated advisor', fr: 'Votre conseiller dédié' },
   'menu.advisorSub': { en: 'Real support for real decisions', fr: 'Un vrai soutien pour de vraies décisions' },
+  'menu.advisorOpenFailed': { en: 'Could not open Advisor chat', fr: 'Impossible d\'ouvrir le chat avec le conseiller' },
   'menu.message': { en: 'Message', fr: 'Message' },
   'menu.idVerification': { en: 'ID verification (KYC/AML)', fr: 'Vérification d\'identité (KYC/AML)' },
   'menu.roleQuincaillerie': { en: 'Materials Supplier', fr: 'Fournisseur de matériaux' },
@@ -714,6 +715,7 @@ export const translations = {
   'chat.voiceNoteFailed': { en: 'Voice note failed', fr: 'Échec de la note vocale' },
   'chat.couldNotSendVoiceNote': { en: 'Could not send voice note.', fr: 'Impossible d\'envoyer la note vocale.' },
   'chat.isTyping': { en: 'is typing…', fr: 'est en train d\'écrire…' },
+  'chat.aiBadge': { en: 'AI', fr: 'IA' },
   'chat.areTyping': { en: 'are typing…', fr: 'sont en train d\'écrire…' },
   'chat.noMessagesYet': { en: 'No messages yet', fr: 'Aucun message pour l\'instant' },
   'chat.sayHelloToStart': { en: 'Say hello to start the conversation!', fr: 'Dites bonjour pour démarrer la conversation !' },
@@ -721,6 +723,9 @@ export const translations = {
   'chat.editingLabel': { en: 'Editing', fr: 'Modification' },
   'chat.editMessagePlaceholder': { en: 'Edit message…', fr: 'Modifier le message…' },
   'chat.typeMessagePlaceholder': { en: 'Type your message...', fr: 'Écrivez votre message...' },
+  // Matches web's composer ("Message Contractor Nice…"). {name} is replaced at
+  // the call site — t() has no interpolation of its own.
+  'chat.messagePersonPlaceholder': { en: 'Message {name}…', fr: 'Écrire à {name}…' },
   'chat.startVoiceCall': { en: 'Start voice call', fr: 'Démarrer un appel vocal' },
   'chat.startVideoCall': { en: 'Start video call', fr: 'Démarrer un appel vidéo' },
   'chat.conversationDetails': { en: 'Conversation details', fr: 'Détails de la conversation' },

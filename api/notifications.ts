@@ -4,8 +4,26 @@ import type { StatusTone } from '../theme/tokens';
 
 export type NotifCategory = 'funding' | 'milestones' | 'marketplace' | 'verification' | 'messages';
 
+/** Same icon keys, chosen by the same per-type rules, as the web mapping
+ * (MboaTrustFrontend/src/api/notifications.ts). NotificationsModal maps each
+ * key to its lucide glyph. Previously mobile guessed an icon from the category
+ * and title text, so the same event could show a padlock here and a bell on web. */
+export type NotifIcon =
+  | 'lock'
+  | 'camera'
+  | 'checkCircle'
+  | 'flag'
+  | 'refresh'
+  | 'clipboard'
+  | 'celebrate'
+  | 'home'
+  | 'compass'
+  | 'message'
+  | 'bell';
+
 export interface AppNotification {
   id: string;
+  icon: NotifIcon;
   category: NotifCategory;
   title: string;
   body: string;
@@ -60,6 +78,7 @@ const STATUS_TONE: Record<string, StatusTone> = {
 };
 
 function describe(n: BackendNotification): {
+  icon: NotifIcon;
   category: NotifCategory;
   title: string;
   body: string;
@@ -73,6 +92,7 @@ function describe(n: BackendNotification): {
   switch (n.type) {
     case 'project_funded':
       return {
+        icon: 'lock',
         category: 'funding',
         title: 'Funds secured',
         body: 'Your contribution moved into escrow for this project.',
@@ -81,6 +101,7 @@ function describe(n: BackendNotification): {
       };
     case 'milestone_evidence_submitted':
       return {
+        icon: 'camera',
         category: 'milestones',
         title: 'Proof submitted',
         body: 'Milestone evidence was submitted and is ready for your review.',
@@ -88,6 +109,7 @@ function describe(n: BackendNotification): {
       };
     case 'milestone_decision':
       return {
+        icon: p.status === 'released' ? 'checkCircle' : p.status === 'disputed' ? 'flag' : 'refresh',
         category: 'milestones',
         title: 'Milestone update',
         body: `Milestone status changed to "${statusLabel(p.status).toLowerCase()}".`,
@@ -96,6 +118,7 @@ function describe(n: BackendNotification): {
       };
     case 'bid_received':
       return {
+        icon: 'clipboard',
         category: 'marketplace',
         title: 'New bid received',
         body: 'A contractor placed a bid on your tender.',
@@ -103,6 +126,7 @@ function describe(n: BackendNotification): {
       };
     case 'bid_status_changed':
       return {
+        icon: p.status === 'accepted' ? 'celebrate' : 'clipboard',
         category: 'marketplace',
         title: 'Bid update',
         body: `Your bid was ${statusLabel(p.status).toLowerCase()}.`,
@@ -111,6 +135,7 @@ function describe(n: BackendNotification): {
       };
     case 'bid_countered':
       return {
+        icon: 'refresh',
         category: 'marketplace',
         title: 'Counter-offer received',
         body: 'The other side proposed new terms on a bid negotiation — your turn to respond.',
@@ -118,6 +143,7 @@ function describe(n: BackendNotification): {
       };
     case 'milestone_changes_requested':
       return {
+        icon: 'refresh',
         category: 'milestones',
         title: 'Corrections requested',
         body: typeof p.reason === 'string' ? `"${p.reason}"` : 'The funder asked for corrections before this milestone can be approved.',
@@ -125,6 +151,7 @@ function describe(n: BackendNotification): {
       };
     case 'land_purchase_started':
       return {
+        icon: 'home',
         category: 'marketplace',
         title: 'Purchase started',
         body: 'A buyer started a purchase on your land listing.',
@@ -132,6 +159,7 @@ function describe(n: BackendNotification): {
       };
     case 'verification_assigned':
       return {
+        icon: 'compass',
         category: 'verification',
         title: 'New verification assignment',
         body: 'You have been assigned a new on-site verification task.',
@@ -139,6 +167,7 @@ function describe(n: BackendNotification): {
       };
     case 'new_message':
       return {
+        icon: 'message',
         category: 'messages',
         title: 'New message',
         body: 'You have a new message.',
@@ -146,6 +175,7 @@ function describe(n: BackendNotification): {
       };
     case 'dispute_raised':
       return {
+        icon: 'flag',
         category: 'milestones',
         title: 'Dispute raised',
         body: 'A dispute was raised on one of your projects.',
@@ -154,6 +184,7 @@ function describe(n: BackendNotification): {
       };
     case 'dispute_resolved':
       return {
+        icon: 'checkCircle',
         category: 'milestones',
         title: 'Dispute resolved',
         body: `Your dispute was marked "${statusLabel(p.status).toLowerCase()}".`,
@@ -161,18 +192,38 @@ function describe(n: BackendNotification): {
         path: 'Dispute',
       };
     default:
-      return {
-        category: 'messages',
-        title: n.type.replace(/_/g, ' '),
-        body: 'You have a new notification update.',
-      };
+      return { icon: 'bell', ...fallbackDescribe(n.type) };
   }
 }
 
+// The backend fires ~41 notification types; only the dozen above have
+// authored copy (on web too — MboaTrustFrontend/src/api/notifications.ts has
+// the identical switch). Everything else used to render the raw type in
+// lowercase ("pooled contribution collected") under a generic filler line,
+// always filed under Messages regardless of what it was about. Kept identical
+// to web's fallbackDescribe so the two apps never disagree on the same event.
+function inferCategory(type: string): NotifCategory {
+  if (/^(pooled_|project_|subscription_|referral_|group_)/.test(type)) return 'funding';
+  if (/^(milestone_|dispute_|rating_|co_signer_)/.test(type)) return 'milestones';
+  if (/^(bid_|land_|material_order_|visit_|contract_)/.test(type)) return 'marketplace';
+  if (/(verif|kyc|supplier_application)/.test(type)) return 'verification';
+  return 'messages';
+}
+
+function fallbackDescribe(type: string): { category: NotifCategory; title: string; body: string } {
+  const words = type.replace(/_/g, ' ').trim();
+  return {
+    category: inferCategory(type),
+    title: words.charAt(0).toUpperCase() + words.slice(1),
+    body: '',
+  };
+}
+
 function mapNotification(n: BackendNotification): AppNotification {
-  const { category, title, body, stat, path } = describe(n);
+  const { icon, category, title, body, stat, path } = describe(n);
   return {
     id: n._id,
+    icon,
     category,
     title,
     body,

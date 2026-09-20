@@ -133,6 +133,8 @@ export function ChatThreadScreen() {
           isGroup: false,
           updatedAt: new Date().toISOString(),
           participantIds: [],
+          isAdvisor: false,
+          pinned: false,
         }
       : undefined;
 
@@ -318,14 +320,39 @@ export function ChatThreadScreen() {
   const headerSubtitle = typingUsers.length > 0 ? `${typingUsers.join(', ')} ${typingUsers.length === 1 ? t('chat.isTyping') : t('chat.areTyping')}` : conversation?.context ?? subtitle;
 
   return (
+    // scroll={false}: this screen owns its layout — a message ScrollView that
+    // flexes, with the composer pinned under it. Screen's default scroll=true
+    // wrapped all of that in a SECOND ScrollView, so the composer scrolled
+    // with the page instead of staying put. paddingBottom 0 because the
+    // composer already pads insets.bottom itself; anything here doubles it.
     <Screen
+      scroll={false}
+      contentContainerStyle={{ paddingBottom: 0 }}
       header={
         <Header
+          // Contact avatar beside the name, as in the web chat header. 36px
+          // rather than web's larger tile: web stacks the chat header under a
+          // separate top bar, mobile has one bar, so it's sized to that bar.
+          leading={
+            conversation?.withName ? (
+              <Avatar name={conversation.withName} avatarUrl={conversation.avatarUrl} size={36} />
+            ) : undefined
+          }
           title={conversation?.withName ?? title}
+          titleBadge={
+            conversation?.isAdvisor ? (
+              <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: colors.amber }}>
+                <Text style={{ fontFamily: FONT.mono, color: colors.forestDark, fontSize: 9, fontWeight: '700' }}>{t('chat.aiBadge')}</Text>
+              </View>
+            ) : undefined
+          }
           subtitle={headerSubtitle}
           back
           action={
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            // gap 8 — same rhythm as the default header cluster and the web
+            // TopBar's `gap-2`, so a chat thread's bar doesn't look tighter
+            // than every other bar in the app.
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Pressable
                 onPress={() => setCallMode('audio')}
                 accessibilityRole="button"
@@ -378,9 +405,27 @@ export function ChatThreadScreen() {
           ) : (
             groups.map((group) => (
               <View key={group.label}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 14 }}>
+                {/* Web's DateDivider: gap-3 my-5 px-2, label 10px semibold
+                    mono uppercase tracking-widest in a round parchment pill. */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 20, paddingHorizontal: 8 }}>
                   <View style={{ flex: 1, height: 1, backgroundColor: colors.parchmentDark }} />
-                  <Text style={{ fontFamily: FONT.mono, fontSize: 9, color: colors.inkMuted, textTransform: 'uppercase', letterSpacing: 1 }}>{group.label}</Text>
+                  <Text
+                    style={{
+                      fontFamily: FONT.mono,
+                      fontSize: 10,
+                      fontWeight: '600',
+                      color: colors.inkMuted,
+                      textTransform: 'uppercase',
+                      letterSpacing: 1.5,
+                      paddingHorizontal: 12,
+                      paddingVertical: 4,
+                      borderRadius: 999,
+                      overflow: 'hidden',
+                      backgroundColor: colors.parchment,
+                    }}
+                  >
+                    {group.label}
+                  </Text>
                   <View style={{ flex: 1, height: 1, backgroundColor: colors.parchmentDark }} />
                 </View>
                 {group.msgs.map((m, i) => {
@@ -499,7 +544,13 @@ export function ChatThreadScreen() {
               </Pressable>
 
               <TextInput
-                placeholder={editingMsg ? t('chat.editMessagePlaceholder') : t('chat.typeMessagePlaceholder')}
+                placeholder={
+                  editingMsg
+                    ? t('chat.editMessagePlaceholder')
+                    : conversation?.withName
+                      ? t('chat.messagePersonPlaceholder').replace('{name}', conversation.withName)
+                      : t('chat.typeMessagePlaceholder')
+                }
                 placeholderTextColor={colors.inkSubtle}
                 value={inputMessage}
                 onChangeText={(v) => {

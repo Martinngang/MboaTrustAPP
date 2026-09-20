@@ -7,6 +7,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NavigationContainer } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
+import { Platform, StatusBar as RNStatusBar } from 'react-native';
 import { ThemeProvider, useTheme } from './theme/ThemeProvider';
 import { useAppFonts } from './theme/useAppFonts';
 import { AppProvider, useApp } from './context/AppContext';
@@ -19,6 +20,21 @@ import { GlobalLoadingBar } from './components/GlobalLoadingBar';
 import { StripeRootWrapper } from './components/StripeRootWrapper';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// A real SDK 57 build is always edge-to-edge: the status bar is transparent
+// and the app draws beneath it, so the app Header can paint that strip in its
+// own colour (see Header.tsx / Screen.tsx). Expo Go's host window on older
+// Android versions isn't edge-to-edge, though — there the system draws an
+// opaque black status bar ABOVE the app, which is the "separate dark strip"
+// seen while testing in Expo Go, and nothing the app renders can reach it.
+// Making it translucent once at startup gives Expo Go the same layout as the
+// real build, so what you test is what ships. Under edge-to-edge these calls
+// are harmless no-ops. (expo-status-bar dropped both props in SDK 57, which
+// is why this goes through react-native's StatusBar directly.)
+if (Platform.OS === 'android') {
+  RNStatusBar.setTranslucent(true);
+  RNStatusBar.setBackgroundColor('transparent');
+}
 
 const queryClient = new QueryClient();
 

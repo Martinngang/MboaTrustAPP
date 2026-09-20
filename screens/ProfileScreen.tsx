@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
+import { setStatusBarStyle } from 'expo-status-bar';
 import { View, Text, Pressable, ActivityIndicator, Image } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -29,7 +30,8 @@ import {
   Monitor,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Screen } from '../components/Screen';
 import { Card } from '../components/Card';
 import { GroupedLinks } from '../components/GroupedLinks';
@@ -41,6 +43,8 @@ import { useApp } from '../context/AppContext';
 import { useToast } from '../components/Toast';
 import { useMyKycStatusQuery, type KycStatus } from '../api/kyc';
 import { useUploadAvatarMutation } from '../api/session';
+import { useOpenAdvisorConversationMutation } from '../api/messaging';
+import { apiErrorMessage } from '../api/client';
 import { useNotificationsQuery } from '../api/notifications';
 import { useMyFundedProjectsQuery } from '../api/projects';
 import { useJobsQuery, useBidsQuery } from '../api/tenders';
@@ -104,7 +108,19 @@ interface QuickAction {
 // mirroring every section, link, icon and navigation target web's version
 // has, adapted to RN screens/tab-jumps in place of web's router paths.
 export function ProfileScreen() {
-  const { colors, preference, setPreference } = useTheme();
+  const { colors, mode, preference, setPreference } = useTheme();
+  const insets = useSafeAreaInsets();
+
+  // The hero behind the status bar is forestDark in both themes, so the
+  // status-bar icons must be light here even in light mode — dark icons on
+  // dark green are unreadable. Scoped to focus (not mount) because stack
+  // screens stay mounted underneath whatever is pushed on top of them.
+  useFocusEffect(
+    useCallback(() => {
+      setStatusBarStyle('light');
+      return () => setStatusBarStyle(mode === 'dark' ? 'light' : 'dark');
+    }, [mode])
+  );
   const { name, avatarUrl, user, roles, activeRole, setRoleSelectorOpen, setNotificationsOpen, isAdmin, logout, refresh } = useApp();
   const navigation = useNavigation<any>();
   const { show: showToast } = useToast();
@@ -113,6 +129,7 @@ export function ProfileScreen() {
   const { data: kycStatus = 'unverified' } = useMyKycStatusQuery();
   const { data: notifData } = useNotificationsQuery();
   const uploadAvatar = useUploadAvatarMutation();
+  const openAdvisor = useOpenAdvisorConversationMutation(user?._id ?? null);
 
   const isContractor = roles.includes('contractor');
   const isVerifierRole = roles.includes('verifier');
@@ -241,8 +258,11 @@ export function ProfileScreen() {
   return (
     <Screen
       {...pullToRefresh}
+      // The forest hero extends under the status bar instead of sitting
+      // below a cream strip — same seam fix as the app Header.
+      headerHandlesTopInset
       header={
-        <View style={{ backgroundColor: colors.forestDark, paddingTop: 18, paddingBottom: 22, paddingHorizontal: 20, alignItems: 'center' }}>
+        <View style={{ backgroundColor: colors.forestDark, paddingTop: insets.top + 18, paddingBottom: 22, paddingHorizontal: 20, alignItems: 'center' }}>
           <View style={{ position: 'relative', marginBottom: 10 }}>
             <ProgressRing value={trustScore} size={92} stroke={3} color={colors.amber} track="rgba(255,255,255,0.2)">
               <Pressable
@@ -398,11 +418,23 @@ export function ProfileScreen() {
             <Text style={{ fontFamily: FONT.mono, color: 'rgba(255,255,255,0.6)', fontSize: 10, marginTop: 2 }}>{t('menu.advisorSub')}</Text>
           </View>
           <Pressable
-            onPress={() => navigation.navigate('Messages')}
+            onPress={async () => {
+              try {
+                const conversation = await openAdvisor.mutateAsync();
+                navigation.navigate('ChatThread', {
+                  conversationId: conversation.id,
+                  title: conversation.withName,
+                  subtitle: conversation.context,
+                });
+              } catch (err) {
+                showToast({ title: t('menu.advisorOpenFailed'), description: apiErrorMessage(err, t('menu.pleaseTryAgain')), tone: 'error' });
+              }
+            }}
+            disabled={openAdvisor.isPending}
             accessibilityRole="button"
-            style={{ backgroundColor: colors.amber, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 }}
+            style={{ backgroundColor: colors.amber, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, opacity: openAdvisor.isPending ? 0.6 : 1 }}
           >
-            <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forestDark, fontSize: 12 }}>{t('menu.message')}</Text>
+            <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.forestDark, fontSize: 12 }}>{openAdvisor.isPending ? '…' : t('menu.message')}</Text>
           </Pressable>
         </View>
 

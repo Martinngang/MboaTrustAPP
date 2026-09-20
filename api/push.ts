@@ -1,8 +1,20 @@
 import { useMutation } from '@tanstack/react-query';
 import { Platform } from 'react-native';
+import { isRunningInExpoGo } from 'expo';
 import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
+import type * as Notifications from 'expo-notifications';
 import { api } from './client';
+
+// `expo-notifications` must NOT be imported at module scope. Its index
+// re-exports `DevicePushTokenAutoRegistration.fx`, a side-effect module that
+// calls `addPushTokenListener()` as it loads — which calls
+// `warnOfExpoGoPushUsage()`, and that *throws* (not warns) on Android inside
+// Expo Go since SDK 53. A static import therefore crashes the whole app at
+// startup with "[runtime not ready]" before anything renders, even though
+// every call site below is already permission-guarded. Loading it lazily,
+// only once we know we're not in Expo Go, keeps the app bootable there while
+// leaving real builds completely unchanged.
+const loadNotifications = async () => import('expo-notifications');
 
 // Ported from MboaTrustFrontend/src/api/push.ts's useSetDeviceTokenMutation
 // — but web's version actually POSTs the wrong field name (`fcmDeviceToken`)
@@ -22,9 +34,12 @@ export function useSetDeviceTokenMutation() {
 /** Push tokens don't work on simulators/emulators (and this module has no
  * meaningful behavior in the web preview build) — mirrors web's own
  * isPushAvailable() gate that hides the toggle entirely rather than showing
- * one that would just fail every time it's tapped. */
+ * one that would just fail every time it's tapped. Expo Go is excluded for
+ * the same reason: it dropped remote push in SDK 53, so the toggle could
+ * never do anything but fail there (and see loadNotifications above — this
+ * gate is also what keeps the module from ever being imported in Expo Go). */
 export function isPushAvailable(): boolean {
-  return Platform.OS !== 'web' && Device.isDevice;
+  return Platform.OS !== 'web' && Device.isDevice && !isRunningInExpoGo();
 }
 
 /** The backend's notificationService.js delivers push via Firebase Admin
@@ -43,6 +58,7 @@ export function isPushFullySupported(): boolean {
 
 export async function getPushPermissionStatus(): Promise<Notifications.PermissionStatus | null> {
   if (!isPushAvailable()) return null;
+  const Notifications = await loadNotifications();
   const { status } = await Notifications.getPermissionsAsync();
   return status;
 }
@@ -58,6 +74,7 @@ export async function getPushPermissionStatus(): Promise<Notifications.Permissio
 export async function requestPushToken(): Promise<string | null> {
   if (!isPushAvailable()) return null;
   try {
+    const Notifications = await loadNotifications();
     const existing = await Notifications.getPermissionsAsync();
     let finalStatus = existing.status;
     if (finalStatus !== 'granted') {

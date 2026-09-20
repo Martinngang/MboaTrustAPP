@@ -77,11 +77,19 @@ export function MessageBubble({
           style={[
             bubbleRadius,
             {
-              backgroundColor: msg.isDeleted ? colors.parchmentDark : isMe ? colors.forestDark : colors.surface,
-              borderWidth: isMe || msg.isDeleted ? 0 : 1,
-              borderColor: colors.parchmentDark,
-              paddingHorizontal: 12,
-              paddingVertical: 9,
+              // Same fills as the web MessageBubble (MessagingScreens.tsx):
+              // outgoing C.forest, incoming parchment. Mobile had drifted to
+              // the darker forestDark and a white surface, so the same thread
+              // looked like two different products side by side.
+              backgroundColor: msg.isDeleted ? colors.parchmentDark : isMe ? colors.forest : colors.parchment,
+              // web: px-4 py-2.5, no border, `--shadow-sm` for separation
+              paddingHorizontal: 16,
+              paddingVertical: 10,
+              shadowColor: '#000',
+              shadowOpacity: 0.06,
+              shadowRadius: 3,
+              shadowOffset: { width: 0, height: 1 },
+              elevation: 1,
               gap: 6,
             },
           ]}

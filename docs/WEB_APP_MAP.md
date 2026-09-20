@@ -163,6 +163,20 @@ screen started it. Opening a chat never persists anything — only `POST /messag
 (first message) or an existing conversation does. Mobile MUST reproduce this
 draft-until-first-send pattern, not eagerly `POST /conversations` on chat-open.
 
+**The one deliberate exception — the AI Advisor thread.** The "Dedicated advisor"
+card's Message button (web `ProfileScreen` in `SharedScreens.tsx`, mobile
+`screens/ProfileScreen.tsx`) calls `POST /conversations/advisor`
+(`useOpenAdvisorConversationMutation`), which get-or-creates the caller's 1:1
+conversation with the singleton Advisor `User` (`isSystemAccount: true`), pins it
+(`ConversationParticipant.pinnedAt`), and — only the first time — seeds a real
+greeting message, so it is never a draft: navigate with a real `conversationId`
+(mobile: `ChatThread` `{ conversationId }`, never `draftUserId`). `GET /conversations`
+now sorts pinned conversations first and returns `pinned` per item; participants
+carry `isSystemAccount`, which the clients map to `Conversation.isAdvisor` to render
+the "AI" badge. Replies are generated server-side (Gemini via `aiClient.js`) and
+delivered through the normal `deliverMessage` path, so they arrive over the existing
+`message:new` / `typing:*` socket events — no client-side Gemini call.
+
 ## 10. Community / referrals
 
 | Route | Screen | Backend |

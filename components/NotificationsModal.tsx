@@ -16,8 +16,10 @@ import {
   Compass,
   MessageSquare,
   Home as HomeIcon,
+  Settings,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
+import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../theme/ThemeProvider';
 import { FONT, type StatusTone } from '../theme/tokens';
 import { useApp } from '../context/AppContext';
@@ -27,32 +29,58 @@ import {
   useMarkAllNotificationsReadMutation,
   type AppNotification,
   type NotifCategory,
+  type NotifIcon,
 } from '../api/notifications';
-import { StatusBadge } from './StatusBadge';
 
-const CATEGORIES: { id: NotifCategory | 'all'; label: string; color: string }[] = [
-  { id: 'all', label: 'All', color: '#0F7A52' },
-  { id: 'funding', label: 'Funding', color: '#0F7A52' },
-  { id: 'milestones', label: 'Milestones', color: '#C9971E' },
-  { id: 'marketplace', label: 'Marketplace', color: '#1E3A5F' },
-  { id: 'verification', label: 'Verification', color: '#2D4A2D' },
-  { id: 'messages', label: 'Messages', color: '#B23A2E' },
+// Same labels, order and colour roles as the web drawer's CATEGORY_META
+// (MboaTrustFrontend/src/components/NotificationsDrawer.tsx). Colours are
+// theme TOKENS, not hex: these used to be hard-coded light-theme values, so in
+// dark mode every chip and accent here drifted from web, which reads the
+// theme-aware C.forest / C.amber / C.steel / C.moss / C.seal.
+type ColorToken = 'forest' | 'amber' | 'steel' | 'moss' | 'seal';
+const CATEGORIES: { id: NotifCategory | 'all'; label: string; token: ColorToken }[] = [
+  { id: 'all', label: 'All', token: 'forest' },
+  { id: 'funding', label: 'Funding', token: 'forest' },
+  { id: 'milestones', label: 'Milestones', token: 'amber' },
+  { id: 'marketplace', label: 'Marketplace', token: 'steel' },
+  { id: 'verification', label: 'Verification', token: 'moss' },
+  { id: 'messages', label: 'Messages', token: 'seal' },
 ];
+const CATEGORY_TOKEN: Record<NotifCategory, ColorToken> = {
+  funding: 'forest',
+  milestones: 'amber',
+  marketplace: 'steel',
+  verification: 'moss',
+  messages: 'seal',
+};
+const CATEGORY_LABEL: Record<NotifCategory, string> = {
+  funding: 'Funding',
+  milestones: 'Milestones',
+  marketplace: 'Marketplace',
+  verification: 'Verification',
+  messages: 'Messages',
+};
+// RN has no color-mix(); web tints at 14% (chips/tags) and 16% (avatar).
+// 0x24 ≈ 14%, 0x29 ≈ 16% as 8-digit hex alpha.
+const TINT_14 = '24';
+const TINT_16 = '29';
 
-function getCategoryIcon(category: NotifCategory, title: string): LucideIcon {
-  if (category === 'funding') return Lock;
-  if (category === 'verification') return Compass;
-  if (category === 'messages') return MessageSquare;
-  if (category === 'marketplace') {
-    if (title.toLowerCase().includes('bid')) return ClipboardList;
-    if (title.toLowerCase().includes('celebrate') || title.toLowerCase().includes('awarded')) return PartyPopper;
-    return HomeIcon;
-  }
-  if (title.toLowerCase().includes('proof') || title.toLowerCase().includes('evidence')) return Camera;
-  if (title.toLowerCase().includes('dispute') || title.toLowerCase().includes('flag')) return Flag;
-  if (title.toLowerCase().includes('corrections') || title.toLowerCase().includes('counter')) return RotateCcw;
-  return CheckCircle;
-}
+// Icon keys come from the notification mapping (api/notifications.ts), which
+// picks them by the same per-type rules as web — replacing a title-text
+// heuristic that could disagree with web on the same event.
+const NOTIF_ICON: Record<NotifIcon, LucideIcon> = {
+  lock: Lock,
+  camera: Camera,
+  checkCircle: CheckCircle,
+  flag: Flag,
+  refresh: RotateCcw,
+  clipboard: ClipboardList,
+  celebrate: PartyPopper,
+  home: HomeIcon,
+  compass: Compass,
+  message: MessageSquare,
+  bell: Bell,
+};
 
 export function NotificationsModal() {
   const { colors } = useTheme();
@@ -70,6 +98,16 @@ export function NotificationsModal() {
   const filteredNotifications = notifications.filter(
     (n) => activeCategory === 'all' || n.category === activeCategory
   );
+  // Grouped exactly like the web drawer: a "New" section, an "Earlier"
+  // divider only when both groups exist, then the read items.
+  const unreadItems = filteredNotifications.filter((n) => n.unread);
+  const readItems = filteredNotifications.filter((n) => !n.unread);
+  const navigation = useNavigation<any>();
+  const openPreferences = () => {
+    setSelectedNotif(null);
+    setNotificationsOpen(false);
+    navigation.navigate('NotificationPreferences');
+  };
 
   const handleOpenDetail = (notif: AppNotification) => {
     setSelectedNotif(notif);
@@ -91,8 +129,10 @@ export function NotificationsModal() {
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'space-between',
-              paddingHorizontal: 20,
+              // px-4 py-4, matching the web drawer header
+              paddingHorizontal: 16,
               paddingVertical: 16,
+              gap: 8,
               borderBottomWidth: 1,
               borderBottomColor: colors.parchmentDark,
             }}
@@ -110,17 +150,17 @@ export function NotificationsModal() {
                 </Text>
               </Pressable>
             ) : (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 18 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, minWidth: 0 }}>
+                <Text style={{ fontFamily: FONT.serifBold, color: colors.ink, fontSize: 16 }}>
                   Notifications
                 </Text>
                 {unreadCount > 0 && (
                   <View
                     style={{
                       backgroundColor: colors.seal,
-                      paddingHorizontal: 7,
+                      paddingHorizontal: 8,
                       paddingVertical: 2,
-                      borderRadius: 10,
+                      borderRadius: 999,
                     }}
                   >
                     <Text style={{ fontFamily: FONT.mono, color: '#fff', fontSize: 10, fontWeight: '700' }}>
@@ -131,45 +171,25 @@ export function NotificationsModal() {
               </View>
             )}
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            {/* Same three 32px icon controls as the web drawer, in the same
+                order: mark-all-read (only when there's something unread),
+                notification settings, close. The web drawer has no fill on
+                these — only a parchment hover — so on touch they're a pressed
+                state rather than a permanent filled circle. */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 }}>
               {!selectedNotif && unreadCount > 0 && (
-                <Pressable
-                  onPress={() => markAllRead.mutate()}
-                  hitSlop={8}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 4,
-                    paddingHorizontal: 10,
-                    paddingVertical: 6,
-                    borderRadius: 12,
-                    backgroundColor: colors.forest + '15',
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Mark all as read"
-                >
-                  <CheckCheck size={14} color={colors.forest} />
-                  <Text style={{ fontFamily: FONT.mono, color: colors.forest, fontSize: 10, fontWeight: '600' }}>
-                    Mark Read
-                  </Text>
-                </Pressable>
+                <HeaderIconButton label="Mark all read" onPress={() => markAllRead.mutate()} colors={colors}>
+                  <CheckCheck size={15} color={colors.inkMuted} />
+                </HeaderIconButton>
               )}
-              <Pressable
-                onPress={handleClose}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Close notifications"
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 16,
-                  backgroundColor: colors.parchment,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <X size={18} color={colors.inkMuted} />
-              </Pressable>
+              {!selectedNotif && (
+                <HeaderIconButton label="Notification settings" onPress={openPreferences} colors={colors}>
+                  <Settings size={15} color={colors.inkMuted} />
+                </HeaderIconButton>
+              )}
+              <HeaderIconButton label="Close notifications" onPress={handleClose} colors={colors}>
+                <X size={15} color={colors.inkMuted} />
+              </HeaderIconButton>
             </View>
           </View>
 
@@ -181,7 +201,7 @@ export function NotificationsModal() {
               keyboardShouldPersistTaps="handled"
             >
               {(() => {
-                const Icon = getCategoryIcon(selectedNotif.category, selectedNotif.title);
+                const Icon = NOTIF_ICON[selectedNotif.icon];
                 return (
                   <View style={{ alignItems: 'center', paddingVertical: 16, gap: 12 }}>
                     <View
@@ -257,7 +277,7 @@ export function NotificationsModal() {
                   <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 13 }}>
                     Status / Value
                   </Text>
-                  <StatusBadge status={selectedNotif.stat.label.toLowerCase()} />
+                  <StatPill stat={selectedNotif.stat} />
                 </View>
               )}
 
@@ -280,33 +300,45 @@ export function NotificationsModal() {
             /* Notification List View */
             <View style={{ flex: 1 }}>
               {/* Category Filter Chips */}
+              {/* flexGrow/flexShrink 0 is the fix for the stretched / clipped
+                  chips. RN's ScrollView defaults to flexGrow:1, so this
+                  horizontal row and the list below were splitting the sheet's
+                  height between them, and the chips (row children stretch on
+                  the cross axis by default) filled it: tall ~100px boxes in
+                  the web preview, squeezed and clipped on a shorter phone
+                  sheet. Same bug, two symptoms. It's the web drawer's
+                  `flex-shrink-0` row. */}
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 10, gap: 8 }}
+                style={{ flexGrow: 0, flexShrink: 0 }}
+                contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, gap: 6, alignItems: 'center' }}
               >
                 {CATEGORIES.map((cat) => {
                   const active = activeCategory === cat.id;
+                  const tone = colors[cat.token];
                   return (
                     <Pressable
                       key={cat.id}
                       onPress={() => setActiveCategory(cat.id)}
                       accessibilityRole="tab"
                       accessibilityState={{ selected: active }}
+                      // web: rounded-full border px-3 py-1.5 text-[11px] font-semibold,
+                      // active = the category's own colour at 14% fill
                       style={{
-                        paddingHorizontal: 14,
+                        paddingHorizontal: 12,
                         paddingVertical: 6,
-                        borderRadius: 16,
+                        borderRadius: 999,
                         borderWidth: 1,
-                        borderColor: active ? colors.forest : colors.parchmentDark,
-                        backgroundColor: active ? colors.forest + '15' : colors.surface,
+                        borderColor: active ? tone : colors.parchmentDark,
+                        backgroundColor: active ? tone + TINT_14 : colors.surface,
                       }}
                     >
                       <Text
                         style={{
-                          fontFamily: FONT.sansMedium,
-                          fontSize: 12,
-                          color: active ? colors.forest : colors.inkMuted,
+                          fontFamily: FONT.sansSemiBold,
+                          fontSize: 11,
+                          color: active ? tone : colors.inkMuted,
                         }}
                       >
                         {cat.label}
@@ -318,7 +350,7 @@ export function NotificationsModal() {
 
               {/* Notification Cards */}
               <ScrollView
-                contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16, gap: 8 }}
+                contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 24, gap: 8 }}
                 keyboardShouldPersistTaps="handled"
               >
                 {isLoading ? (
@@ -326,87 +358,157 @@ export function NotificationsModal() {
                     <ActivityIndicator color={colors.forest} />
                   </View>
                 ) : filteredNotifications.length === 0 ? (
-                  <View style={{ paddingVertical: 40, alignItems: 'center', gap: 8 }}>
-                    <Bell size={32} color={colors.inkSubtle} opacity={0.5} />
-                    <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 13 }}>
-                      No notifications in this category
-                    </Text>
-                  </View>
+                  // web: plain text, py-16 text-sm inkSubtle
+                  <Text style={{ fontFamily: FONT.sans, color: colors.inkSubtle, fontSize: 14, textAlign: 'center', paddingVertical: 64 }}>
+                    No notifications in this category
+                  </Text>
                 ) : (
-                  filteredNotifications.map((n) => {
-                    const Icon = getCategoryIcon(n.category, n.title);
-                    return (
-                      <Pressable
-                        key={n.id}
-                        onPress={() => handleOpenDetail(n)}
-                        accessibilityRole="button"
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'flex-start',
-                          gap: 12,
-                          padding: 14,
-                          borderRadius: 16,
-                          backgroundColor: colors.surface,
-                          borderWidth: 1,
-                          borderColor: colors.parchmentDark,
-                          borderLeftWidth: n.unread ? 4 : 1,
-                          borderLeftColor: n.unread ? colors.forest : colors.parchmentDark,
-                        }}
-                      >
-                        <View
-                          style={{
-                            width: 38,
-                            height: 38,
-                            borderRadius: 12,
-                            backgroundColor: colors.forest + '15',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                        >
-                          <Icon size={18} color={colors.forest} />
-                        </View>
-                        <View style={{ flex: 1, minWidth: 0 }}>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Text
-                              style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13, flex: 1 }}
-                              numberOfLines={1}
-                            >
-                              {n.title}
-                            </Text>
-                            <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 10 }}>
-                              {n.time}
-                            </Text>
-                          </View>
-                          <Text
-                            style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 12, marginTop: 2 }}
-                            numberOfLines={2}
-                          >
-                            {n.body}
-                          </Text>
-                          {n.stat && (
-                            <View style={{ marginTop: 6, alignSelf: 'flex-start' }}>
-                              <StatusBadge status={n.stat.label.toLowerCase()} />
-                            </View>
-                          )}
-                        </View>
-                        {n.unread && (
-                          <View
-                            style={{
-                              width: 8,
-                              height: 8,
-                              borderRadius: 4,
-                              backgroundColor: colors.forest,
-                              marginTop: 4,
-                            }}
-                          />
-                        )}
-                      </Pressable>
-                    );
-                  })
+                  <>
+                    {unreadItems.length > 0 && (
+                      <Text style={sectionLabelStyle(colors)}>New</Text>
+                    )}
+                    {unreadItems.map((n) => (
+                      <NotifCard key={n.id} n={n} colors={colors} onOpen={() => handleOpenDetail(n)} />
+                    ))}
+                    {unreadItems.length > 0 && readItems.length > 0 && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+                        <View style={{ flex: 1, height: 1, backgroundColor: colors.parchmentDark }} />
+                        <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 9.5, textTransform: 'uppercase', letterSpacing: 1.5 }}>
+                          Earlier
+                        </Text>
+                        <View style={{ flex: 1, height: 1, backgroundColor: colors.parchmentDark }} />
+                      </View>
+                    )}
+                    {readItems.map((n) => (
+                      <NotifCard key={n.id} n={n} colors={colors} onOpen={() => handleOpenDetail(n)} />
+                    ))}
+                  </>
                 )}
               </ScrollView>
             </View>
           )}
     </BottomSheetModal>
+  );
+}
+
+type ThemeColors = ReturnType<typeof useTheme>['colors'];
+
+const sectionLabelStyle = (colors: ThemeColors) => ({
+  // web: font-mono text-[10px] font-bold uppercase tracking-widest, pt-2
+  fontFamily: FONT.mono,
+  color: colors.inkSubtle,
+  fontSize: 10,
+  fontWeight: '700' as const,
+  textTransform: 'uppercase' as const,
+  letterSpacing: 1.5,
+  paddingTop: 8,
+  paddingHorizontal: 2,
+});
+
+/** 32px round icon control, matching the web drawer's header buttons. */
+function HeaderIconButton({
+  label,
+  onPress,
+  colors,
+  children,
+}: {
+  label: string;
+  onPress: () => void;
+  colors: ThemeColors;
+  children: React.ReactNode;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={6}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => ({
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: pressed ? colors.parchment : 'transparent',
+      })}
+    >
+      {children}
+    </Pressable>
+  );
+}
+
+/** Mirrors the web drawer's NotifCard: 40px tinted avatar in the category's
+ * colour, title + category tag, body, optional stat, and a right-hand column
+ * with the time stacked over a 6px unread dot. */
+function NotifCard({ n, colors, onOpen }: { n: AppNotification; colors: ThemeColors; onOpen: () => void }) {
+  const tone = colors[CATEGORY_TOKEN[n.category]];
+  const Icon = NOTIF_ICON[n.icon];
+  return (
+    <Pressable
+      onPress={onOpen}
+      accessibilityRole="button"
+      accessibilityLabel={`${n.unread ? 'Unread. ' : ''}${n.title}. ${n.body}`}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 10,
+        padding: 12,
+        borderRadius: 16,
+        backgroundColor: pressed ? colors.parchment : colors.surface,
+        borderWidth: 1,
+        borderColor: colors.parchmentDark,
+        borderLeftWidth: n.unread ? 3 : 1,
+        borderLeftColor: n.unread ? colors.forest : colors.parchmentDark,
+      })}
+    >
+      <View
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: 16,
+          backgroundColor: tone + TINT_16,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Icon size={18} color={tone} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+          <Text style={{ fontFamily: FONT.sansSemiBold, color: colors.ink, fontSize: 13 }}>{n.title}</Text>
+          <View style={{ borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, backgroundColor: tone + TINT_14 }}>
+            <Text style={{ fontFamily: FONT.mono, color: tone, fontSize: 9, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              {CATEGORY_LABEL[n.category]}
+            </Text>
+          </View>
+        </View>
+        {!!n.body && (
+          <Text style={{ fontFamily: FONT.sans, color: colors.inkMuted, fontSize: 11.5, lineHeight: 15 }}>{n.body}</Text>
+        )}
+        {n.stat && (
+          <View style={{ alignSelf: 'flex-start' }}>
+            <StatPill stat={n.stat} />
+          </View>
+        )}
+      </View>
+      <View style={{ alignItems: 'flex-end', gap: 6, paddingTop: 2, flexShrink: 0 }}>
+        <Text style={{ fontFamily: FONT.mono, color: colors.inkSubtle, fontSize: 9.5 }}>{n.time}</Text>
+        {n.unread && <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.forest }} />}
+      </View>
+    </Pressable>
+  );
+}
+
+/** Mirrors the web drawer's NotifStatPill: coloured by the notification's own
+ * `tone`. This used to go through StatusBadge with the LABEL as the status,
+ * so an amount like "XAF 250 000" — not a status StatusBadge knows — fell
+ * back to neutral grey, where web shows it as a green success pill. */
+function StatPill({ stat }: { stat: NonNullable<AppNotification['stat']> }) {
+  const { statusTones } = useTheme();
+  const tone = statusTones[stat.tone] ?? statusTones.neutral;
+  return (
+    <View style={{ alignSelf: 'flex-start', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, backgroundColor: tone.bg }}>
+      <Text style={{ fontFamily: FONT.mono, color: tone.text, fontSize: 10, fontWeight: '700' }}>{stat.label}</Text>
+    </View>
   );
 }

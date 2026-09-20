@@ -1,4 +1,9 @@
-import { View, ScrollView, RefreshControl, StatusBar, KeyboardAvoidingView, Platform, type StyleProp, type ViewStyle } from 'react-native';
+import { isValidElement, useContext } from 'react';
+import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
+// No StatusBar here on purpose: App.tsx owns the single expo-status-bar
+// instance. Two StatusBar components mounted at once fight over barStyle,
+// and the last one to mount wins non-deterministically on Android.
+import { View, ScrollView, RefreshControl, KeyboardAvoidingView, Platform, type StyleProp, type ViewStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeProvider';
 import { useApp } from '../context/AppContext';
@@ -23,6 +28,11 @@ export interface ScreenProps {
    * No-op when `scroll` is false, since RefreshControl needs a ScrollView. */
   refreshing?: boolean;
   onRefresh?: () => void;
+  /** Set when a custom (non-`Header`) `header` pads `useSafeAreaInsets().top`
+   * itself, so it can extend its own background under the status bar
+   * instead of sitting below a cream strip. `<Header/>` never needs this —
+   * it's detected automatically. */
+  headerHandlesTopInset?: boolean;
 }
 
 export function Screen({
@@ -35,8 +45,9 @@ export function Screen({
   edges = ['top', 'left', 'right'],
   refreshing,
   onRefresh,
+  headerHandlesTopInset = false,
 }: ScreenProps) {
-  const { colors, mode } = useTheme();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   // Screen is shared by every screen in the app — authenticated (MainStack)
   // and pre-authenticated (Splash/AuthStack/OnboardingStack) alike. It must
@@ -52,15 +63,42 @@ export function Screen({
   const { destination } = useApp();
   const isAuthenticated = destination === 'home';
 
-  // Calculate bottom inset padding to ensure last item is never hidden behind the fixed bottom tab bar
-  const bottomPadding = includeTabBarPadding ? TAB_BAR_HEIGHT + insets.bottom + 20 : Math.max(insets.bottom, 16);
+  // Reserve room for the floating (position:absolute) bottom tab bar — but
+  // only when this screen is actually INSIDE the tab navigator.
+  // BottomTabBarHeightContext is provided by the tab navigator and is
+  // undefined anywhere else. `includeTabBarPadding` defaults to true and no
+  // screen ever opted out, so every stack screen pushed on top of the tabs
+  // (ChatThread, ProjectDetail, every form…) reserved ~82px for a tab bar that
+  // isn't there — an oversized gap on scrolling screens, and a visible dead
+  // band under anything pinned to the bottom, like the chat composer.
+  const insideTabs = useContext(BottomTabBarHeightContext) !== undefined;
+  const reserveTabBar = includeTabBarPadding && insideTabs;
+  const bottomPadding = reserveTabBar ? TAB_BAR_HEIGHT + insets.bottom + 20 : Math.max(insets.bottom, 16);
+
+  // The app Header paints the status-bar area itself (with its own
+  // `colors.surface`, matching the web TopBar's
+  // `paddingTop: max(1rem, env(safe-area-inset-top))`). Letting SafeAreaView
+  // also claim the top edge would fill that strip with `colors.cream` instead
+  // — in dark mode a near-black #0A0A0D band above a #1B1C21 bar, which is
+  // exactly the "separate dark strip" this removes — and would double the
+  // top padding on top of Header's own inset.
+  //
+  // So the top edge is dropped whenever a Header is what's on top: the
+  // default one, or a `<Header …/>` passed explicitly (most detail screens
+  // do that to set a title/back button). A custom non-Header top section can
+  // opt in with `headerHandlesTopInset` once it pads `insets.top` itself.
+  // Anything else — the pre-auth stacks, or a custom header that hasn't
+  // opted in — keeps the inset here as before.
+  const headerIsAppHeader = isValidElement(header) && header.type === Header;
+  const headerOwnsTopInset =
+    (header === undefined && isAuthenticated) || headerIsAppHeader || headerHandlesTopInset;
+  const effectiveEdges = headerOwnsTopInset ? edges.filter((e) => e !== 'top') : edges;
 
   return (
     <SafeAreaView
       style={[{ flex: 1, backgroundColor: colors.cream }, style]}
-      edges={edges}
+      edges={effectiveEdges}
     >
-      <StatusBar barStyle={mode === 'dark' ? 'light-content' : 'dark-content'} />
 
       {/* Fixed Persistent Header (rendered outside scrollable content) — only
           defaults to the authenticated app header inside the authenticated
